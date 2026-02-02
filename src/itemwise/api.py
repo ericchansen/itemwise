@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 # Load environment variables from .env file (find it relative to this file)
@@ -101,12 +100,12 @@ async def lifespan(app: FastAPI):
     logger.info("Starting Inventory Assistant API...")
     await init_db()
     logger.info("Database initialized")
-    
+
     # Note: Embedding model loads lazily on first search request
     # Skip preloading to speed up startup - the LLM can handle most queries
     # without embeddings (it calls search_items which generates embeddings on demand)
     logger.info("Server ready (embedding model will load on first search)")
-    
+
     yield
     logger.info("Shutting down...")
     await close_db()
@@ -477,21 +476,21 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
                 logger.info(f"Generated display name: '{location}' -> '{display_name}'")
             except Exception as e:
                 logger.warning(f"Failed to generate display name: {e}")
-            
+
             # Get or create location
             loc = await get_or_create_location(session, location.strip(), display_name=display_name)
-            
+
             # Generate embedding
             item_text = _get_item_text_for_embedding(name, description, category)
             embedding = generate_embedding(item_text)
-            
+
             # Log transaction
             await log_transaction(
                 session,
                 operation="CREATE",
                 data={"name": name, "quantity": quantity, "category": category, "location": loc.name},
             )
-            
+
             # Create item
             new_item = await create_item(
                 session,
@@ -502,7 +501,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
                 location_id=loc.id,
                 embedding=embedding,
             )
-            
+
             return {
                 "success": True,
                 "item": {
@@ -519,10 +518,10 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
             item = await get_item(session, item_id)
             if not item:
                 return {"success": False, "error": f"Item {item_id} not found"}
-            
+
             item_name = item.name
             current_qty = item.quantity
-            
+
             if quantity is None or quantity >= current_qty:
                 # Remove completely
                 await log_transaction(session, operation="DELETE", item_id=item_id, data={"name": item_name})
@@ -539,10 +538,10 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
         async with AsyncSessionLocal() as session:
             query_embedding = generate_embedding(query)
             results = await search_items_by_embedding(session, query_embedding, location_name=location, limit=10)
-            
+
             if not results:
                 return {"success": True, "count": 0, "items": []}
-            
+
             return {
                 "success": True,
                 "count": len(results),
@@ -608,7 +607,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
 async def _chat_fallback(user_message: str) -> ChatResponse:
     """Simple pattern-matching fallback when Azure OpenAI is not configured."""
     text = user_message.lower().strip()
-    
+
     async with AsyncSessionLocal() as session:
         # Simple intent detection
         if any(word in text for word in ["what's in", "show", "list", "what do i have"]):
@@ -618,19 +617,19 @@ async def _chat_fallback(user_message: str) -> ChatResponse:
                 if loc_word in text:
                     location = loc_word.title()
                     break
-            
+
             items = await list_items(session, location_name=location)
-            
+
             if not items:
                 return ChatResponse(
                     response=f"No items found{' in ' + location if location else ''}.",
                     action="list",
                     data={"count": 0, "items": []},
                 )
-            
+
             item_list = ", ".join([f"{i.quantity}x {i.name}" for i in items[:5]])
             more = f" and {len(items) - 5} more" if len(items) > 5 else ""
-            
+
             return ChatResponse(
                 response=f"Found {len(items)} items{' in ' + location if location else ''}: {item_list}{more}",
                 action="list",
@@ -639,30 +638,30 @@ async def _chat_fallback(user_message: str) -> ChatResponse:
                     "items": [{"id": i.id, "name": i.name, "quantity": i.quantity} for i in items],
                 },
             )
-        
+
         elif any(word in text for word in ["find", "search", "do i have", "any"]):
             # Search - extract the search term
             search_terms = text
             for word in ["find", "search", "for", "do", "i", "have", "any", "?"]:
                 search_terms = search_terms.replace(word, "")
             search_terms = search_terms.strip()
-            
+
             if not search_terms:
                 return ChatResponse(response="What would you like to search for?")
-            
+
             query_embedding = generate_embedding(search_terms)
             raw_results = await search_items_by_embedding(session, query_embedding, limit=5)
-            
+
             # Filter by similarity threshold (distance < 1.0 means reasonably similar)
             results = [(item, dist) for item, dist in raw_results if dist < 1.0]
-            
+
             if not results:
                 return ChatResponse(
                     response=f"No items found matching '{search_terms}'.",
                     action="search",
                     data={"query": search_terms, "results": []},
                 )
-            
+
             item_list = ", ".join([f"{item.quantity}x {item.name}" for item, _ in results])
             return ChatResponse(
                 response=f"Found: {item_list}",
@@ -672,7 +671,7 @@ async def _chat_fallback(user_message: str) -> ChatResponse:
                     "results": [{"id": i.id, "name": i.name, "quantity": i.quantity} for i, _ in results],
                 },
             )
-        
+
         else:
             # Default response
             return ChatResponse(

@@ -61,7 +61,7 @@ async def create_location(
     """
     if normalized_name is None:
         normalized_name = normalize_location_name(name)
-    
+
     location = Location(
         name=name,
         normalized_name=normalized_name,
@@ -146,14 +146,14 @@ async def get_or_create_location(
     location = await get_location_by_name(session, name)
     if location:
         return location
-    
+
     # Create new location
     normalized = normalize_location_name(name)
-    
+
     # Use provided display name or fall back to title case
     if not display_name:
         display_name = name.title()
-    
+
     return await create_location(session, display_name, description, embedding, normalized)
 
 
