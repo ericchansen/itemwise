@@ -1,11 +1,14 @@
 """SQLAlchemy database models."""
 
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Integer, String, Text, func
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+# Embedding dimension for sentence-transformers all-MiniLM-L6-v2 model
+EMBEDDING_DIMENSION = 384
 
 
 class Base(DeclarativeBase):
@@ -14,8 +17,34 @@ class Base(DeclarativeBase):
     pass
 
 
+class Location(Base):
+    """Model for storage locations (freezer, garage, closet, etc.)."""
+
+    __tablename__ = "locations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False, index=True)  # Display name (e.g., "Tim's Pocket")
+    normalized_name: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)  # For matching (e.g., "tims pocket")
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    embedding: Mapped[Optional[list[float]]] = mapped_column(
+        Vector(EMBEDDING_DIMENSION), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationship to items
+    if TYPE_CHECKING:
+        items: Mapped[list["InventoryItem"]]
+    else:
+        items = relationship("InventoryItem", back_populates="location")
+
+    def __repr__(self) -> str:
+        return f"<Location(id={self.id}, name='{self.name}')>"
+
+
 class InventoryItem(Base):
-    """Model for freezer inventory items."""
+    """Model for inventory items stored in locations."""
 
     __tablename__ = "inventory_items"
 
@@ -24,8 +53,11 @@ class InventoryItem(Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     category: Mapped[str] = mapped_column(String, index=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    location_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("locations.id"), nullable=True, index=True
+    )
     embedding: Mapped[Optional[list[float]]] = mapped_column(
-        Vector(1536), nullable=True
+        Vector(EMBEDDING_DIMENSION), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
@@ -33,6 +65,12 @@ class InventoryItem(Base):
     updated_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), onupdate=func.now(), nullable=True
     )
+
+    # Relationship to location
+    if TYPE_CHECKING:
+        location: Mapped[Optional["Location"]]
+    else:
+        location = relationship("Location", back_populates="items")
 
     def __repr__(self) -> str:
         return f"<InventoryItem(id={self.id}, name='{self.name}', quantity={self.quantity})>"

@@ -259,7 +259,7 @@ class TestListInventory:
 
             assert result["status"] == "success"
             assert result["count"] == 2
-            assert result["category"] == "all"
+            assert result["filters"]["category"] == "all"
             assert len(result["items"]) == 2
 
     @pytest.mark.asyncio
@@ -280,7 +280,7 @@ class TestListInventory:
 
             assert result["status"] == "success"
             assert result["count"] == 1
-            assert result["category"] == "meat"
+            assert result["filters"]["category"] == "meat"
             assert result["items"][0]["name"] == "Chicken"
 
     @pytest.mark.asyncio
@@ -371,7 +371,7 @@ class TestServerIntegration:
         """Test MCP server has correct name."""
         from itemwise.server import mcp
 
-        assert mcp.name == "itemwise"
+        assert mcp.name == "inventory-assistant"
 
 
 class TestLifespan:

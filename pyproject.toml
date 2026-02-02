@@ -1,7 +1,7 @@
 [project]
 name = "itemwise"
 version = "0.1.0"
-description = "AI-powered freezer inventory management with MCP server"
+description = "AI-powered inventory management with MCP server and natural language search"
 requires-python = ">=3.11"
 dependencies = [
     "fastmcp>=0.2.0",
@@ -13,6 +13,13 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "python-dotenv>=1.0.0",
     "psycopg2-binary>=2.9.11",
+    "sentence-transformers>=2.2.0",
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "openai>=1.0.0",
+    "azure-identity>=1.15.0",
+    "playwright>=1.58.0",
+    "httpx>=0.28.1",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +34,7 @@ dev = [
 
 [project.scripts]
 inventory-server = "itemwise.server:main"
+inventory-web = "itemwise.api:run_api"
 
 [build-system]
 requires = ["hatchling"]

@@ -1,21 +1,19 @@
 # Inventory Assistant
 
-AI-powered freezer inventory management with natural language search capabilities. Built with FastMCP to enable AI agents like Claude to manage your inventory through conversational interfaces.
+AI-powered inventory management with natural language search. Track items across multiple locations (freezer, garage, pantry, battery bin - anywhere!) using conversational interfaces.
+
+Built with FastMCP to enable AI agents like Claude to manage your inventory, plus a web UI for easy demos. **Now with Azure OpenAI integration for intelligent natural language understanding!**
 
 ## Features
 
+- 🏠 **Multi-Location Support** - Track items in any location: freezer, garage, closet, tool shed, etc.
 - 🤖 **MCP Server Integration** - Expose inventory operations to AI agents via Model Context Protocol
-- 🔍 **Natural Language Search** - Query your inventory using semantic search powered by pgvector
-- 📝 **Complete Audit Trail** - All AI operations logged to transaction table for tracking
+- 🧠 **Azure OpenAI Powered** - Natural language chat that understands "I put 3 bags of chicken in the freezer"
+- 🔍 **Semantic Search** - Natural language search powered by local embeddings (sentence-transformers) and pgvector
+- 🌐 **Web Interface** - Responsive chat UI that works on desktop and mobile
+- 📝 **Complete Audit Trail** - All operations logged for tracking
 - 🗄️ **PostgreSQL Backend** - Robust database with vector extension for semantic capabilities
 - ⚡ **Async Operations** - Built with SQLAlchemy async for high performance
-- 🔄 **Database Migrations** - Alembic integration for schema versioning
-
-## Prerequisites
-
-- Python 3.11 or higher
-- Docker and Docker Compose
-- [uv](https://docs.astral.sh/uv/) - Fast Python package manager
 
 ## Quick Start
 
@@ -23,7 +21,7 @@ AI-powered freezer inventory management with natural language search capabilitie
 
 ```bash
 git clone <repository-url>
-cd itemwise
+cd inventory-assistant
 
 # Copy environment template
 cp .env.example .env
@@ -49,34 +47,62 @@ docker compose ps
 uv run alembic upgrade head
 ```
 
-### 4. Run MCP Server
+### 4. Configure Azure OpenAI (Optional but Recommended)
 
-```bash
-# Start the server
-uv run inventory-server
-
-# Or during development
-uv run python -m itemwise.server
-```
-
-## Configuration
-
-Edit `.env` file to customize database connection:
+For full natural language understanding (adding/removing items via chat), configure Azure OpenAI:
 
 ```env
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=postgres
-POSTGRES_DB=inventory
-POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
-DEBUG=false
+# Add to your .env file
+AZURE_OPENAI_ENDPOINT=https://your-resource.cognitiveservices.azure.com/
+AZURE_OPENAI_DEPLOYMENT=gpt-4o-mini  # or your deployed model name
 ```
+
+The app uses Azure AD authentication via `DefaultAzureCredential`, so make sure you're logged in:
+```bash
+az login
+```
+
+Without Azure OpenAI, the chat will work in fallback mode with basic pattern matching.
+
+### 5. Run the Application
+
+**Option A: Web Interface (Recommended for demos)**
+```bash
+# Start the web server
+uv run inventory-web
+
+# Open http://localhost:8000 in your browser
+```
+
+**Option B: MCP Server (For AI agents like Claude)**
+```bash
+# Start the MCP server
+uv run inventory-server
+```
+
+## Web Interface
+
+The web UI provides:
+- **Chat tab**: Natural language interaction with your inventory
+- **Inventory tab**: Browse, search, and manage items with filters
+
+With Azure OpenAI enabled, try:
+- "I just bought 5 bags of frozen vegetables and put them in the freezer"
+- "I used 2 of the AA batteries from the garage"
+- "What meat do I have in the freezer?"
+- "Do I have any batteries?"
+- "Show me everything in the garage"
+
+The AI understands context and will automatically:
+- Add items with appropriate categories when you mention buying/storing things
+- Remove or reduce quantities when you mention using items
+- Search and list items when you ask about what you have
 
 ## MCP Client Configuration
 
 ### Claude Desktop
 
-Add to your Claude Desktop configuration file:
+Add to your Claude Desktop configuration:
 
 **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
@@ -84,82 +110,94 @@ Add to your Claude Desktop configuration file:
 ```json
 {
   "mcpServers": {
-    "itemwise": {
+    "inventory-assistant": {
       "command": "uv",
       "args": ["run", "inventory-server"],
-      "cwd": "C:\\Users\\YourName\\repos\\itemwise"
+      "cwd": "/path/to/inventory-assistant"
     }
   }
 }
 ```
 
-After configuration, restart Claude Desktop.
-
-## Available Tools
-
-The MCP server exposes the following tools to AI agents:
+## Available MCP Tools
 
 ### `add_item`
-Add a new item to the freezer inventory.
+Add a new item to any location.
 
-```python
-add_item(
-    name="Chicken Breast",
-    quantity=5,
-    category="meat",
-    description="Organic boneless chicken breast"
-)
 ```
+"Add 3 chicken breasts to the freezer"
+"Put 8 AAA batteries in the battery bin"
+"Store a hammer in the garage"
+```
+
+### `list_inventory`
+List items filtered by category or location.
+
+```
+"What's in the freezer?"
+"Show me all the meat"
+"What electronics do I have?"
+```
+
+### `search_inventory`
+Natural language search across all items.
+
+```
+"Do I have any chicken?"
+"Find batteries"
+"Something to grill"
+```
+
+### `add_location`
+Create a new storage location.
+
+```
+"Create a location called Tool Shed"
+```
+
+### `get_locations`
+List all available storage locations.
 
 ### `update_item_tool`
-Update an existing inventory item.
-
-```python
-update_item_tool(
-    item_id=1,
-    quantity=3,  # Optional: update quantity
-    name="New Name",  # Optional: update name
-)
-```
+Update an existing item's details.
 
 ### `remove_item`
 Remove an item from inventory.
 
-```python
-remove_item(item_id=1)
-```
+## REST API
 
-### `list_inventory`
-List all items or filter by category.
+The web server also exposes a REST API:
 
-```python
-list_inventory()  # All items
-list_inventory(category="meat")  # Filter by category
-```
+- `GET /api/items` - List items (with optional `category` and `location` filters)
+- `POST /api/items` - Add a new item
+- `GET /api/items/{id}` - Get single item
+- `PUT /api/items/{id}` - Update item
+- `DELETE /api/items/{id}` - Delete item
+- `GET /api/search?q=query` - Search items
+- `GET /api/locations` - List locations
+- `POST /api/locations` - Create location
+- `POST /api/chat` - AI-powered chat endpoint (requires Azure OpenAI for full functionality)
 
-### `search_inventory`
-Search inventory using natural language.
+API docs available at `http://localhost:8000/docs`
 
-```python
-search_inventory(query="chicken")
-```
+## Configuration
 
-## Usage Examples
+Edit `.env` file:
 
-Once configured with Claude Desktop, you can interact naturally:
+```env
+# Database
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=inventory
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
 
-```
-You: What's in my freezer?
-Claude: [calls list_inventory()]
+# Application
+DEBUG=false
 
-You: Add 3 packages of ground beef to the inventory
-Claude: [calls add_item(name="Ground Beef", quantity=3, category="meat")]
-
-You: Do I have any chicken?
-Claude: [calls search_inventory(query="chicken")]
-
-You: Remove the item with ID 5
-Claude: [calls remove_item(item_id=5)]
+# Azure OpenAI (optional - enables intelligent chat)
+AZURE_OPENAI_ENDPOINT=https://your-resource.cognitiveservices.azure.com/
+AZURE_OPENAI_DEPLOYMENT=gpt-4o-mini
 ```
 
 ## Development
@@ -167,117 +205,53 @@ Claude: [calls remove_item(item_id=5)]
 ### Project Structure
 
 ```
-itemwise/
-├── src/
-│   └── itemwise/
-│       ├── __init__.py
-│       ├── config.py           # Settings and configuration
-│       ├── server.py            # FastMCP server and tools
-│       └── database/
-│           ├── __init__.py
-│           ├── models.py        # SQLAlchemy models
-│           ├── engine.py        # Database connection
-│           └── crud.py          # CRUD operations
-├── alembic/                     # Database migrations
-├── docker-compose.yml           # PostgreSQL setup
-├── pyproject.toml              # Python dependencies
-└── .env                        # Environment variables
+inventory-assistant/
+├── src/itemwise/
+│   ├── server.py        # MCP server and tools
+│   ├── api.py           # FastAPI REST API
+│   ├── ai_client.py     # Azure OpenAI integration
+│   ├── embeddings.py    # Semantic search embeddings
+│   ├── config.py        # Settings
+│   └── database/
+│       ├── models.py    # SQLAlchemy models
+│       ├── crud.py      # Database operations
+│       └── engine.py    # Connection management
+├── frontend/
+│   └── index.html       # Web UI
+├── alembic/             # Database migrations
+├── tests/               # Test suite
+└── docker-compose.yml   # PostgreSQL setup
 ```
 
 ### Database Migrations
 
-Create a new migration after model changes:
-
 ```bash
-uv run alembic revision --autogenerate -m "Description of changes"
-```
+# Create new migration
+uv run alembic revision --autogenerate -m "Description"
 
-Apply migrations:
-
-```bash
+# Apply migrations
 uv run alembic upgrade head
-```
-
-Rollback one version:
-
-```bash
-uv run alembic downgrade -1
 ```
 
 ### Testing
 
 ```bash
-# Install dev dependencies
-uv sync --dev
-
-# Run tests (when available)
 uv run pytest
 ```
-
-## Database Schema
-
-### inventory_items
-
-| Column      | Type          | Description                        |
-|-------------|---------------|------------------------------------|
-| id          | INTEGER       | Primary key                        |
-| name        | VARCHAR       | Item name                          |
-| quantity    | INTEGER       | Number of items                    |
-| category    | VARCHAR       | Category (meat, vegetables, etc.)  |
-| description | TEXT          | Optional description               |
-| embedding   | VECTOR(1536)  | Semantic search vector             |
-| created_at  | TIMESTAMP     | Creation timestamp                 |
-| updated_at  | TIMESTAMP     | Last update timestamp              |
-
-### transaction_log
-
-| Column     | Type       | Description                    |
-|------------|------------|--------------------------------|
-| id         | INTEGER    | Primary key                    |
-| operation  | VARCHAR    | Operation type (CREATE/UPDATE) |
-| item_id    | INTEGER    | Reference to inventory item    |
-| data       | TEXT       | JSON operation data            |
-| status     | VARCHAR    | PENDING/CONFIRMED/REJECTED     |
-| timestamp  | TIMESTAMP  | Operation timestamp            |
 
 ## Troubleshooting
 
 ### Database connection errors
-
-Ensure PostgreSQL is running:
 ```bash
 docker compose ps
 docker compose logs postgres
 ```
 
 ### Module import errors
-
-Reinstall dependencies:
 ```bash
 uv sync --reinstall
 ```
 
-### MCP server not appearing in Claude
-
-1. Check configuration file path
-2. Verify `cwd` path is correct
-3. Restart Claude Desktop completely
-4. Check Claude Desktop logs for errors
-
-## Future Enhancements
-
-See [functional-spec.md](functional-spec.md) for planned features:
-
-- User approval workflow for AI operations
-- Expiration date tracking
-- Low inventory alerts
-- Recipe ingredient matching
-- OpenAI embeddings for enhanced semantic search
-
 ## License
 
 MIT
-
-## Contributing
-
-Contributions welcome! Please feel free to submit a Pull Request.

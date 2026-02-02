@@ -39,7 +39,7 @@ class TestCreateItem:
     @pytest.mark.asyncio
     async def test_create_item_with_embedding(self, db_session: AsyncSession) -> None:
         """Test creating an item with vector embedding."""
-        embedding = [0.5] * 1536
+        embedding = [0.5] * 384  # 384-dimensional (all-MiniLM-L6-v2)
 
         item = await create_item(
             db_session,
@@ -50,7 +50,7 @@ class TestCreateItem:
         )
 
         assert item.embedding is not None
-        assert len(item.embedding) == 1536
+        assert len(item.embedding) == 384
 
     @pytest.mark.asyncio
     async def test_create_item_minimal(self, db_session: AsyncSession) -> None:
@@ -192,8 +192,8 @@ class TestUpdateItem:
         """Test updating an item's embedding."""
         item = await create_item(db_session, **sample_item_data)
 
-        # Use correct dimension size (1536)
-        new_embedding = [0.1] * 1536
+        # Use correct dimension size (384 for all-MiniLM-L6-v2)
+        new_embedding = [0.1] * 384
         updated = await update_item(db_session, item.id, embedding=new_embedding)
 
         # Compare list elements instead of using == on arrays
@@ -274,13 +274,13 @@ class TestSearchItems:
     @pytest.mark.asyncio
     async def test_search_by_embedding(self, db_session: AsyncSession) -> None:
         """Test vector similarity search."""
-        embedding1 = [1.0] * 1536
-        embedding2 = [0.5] * 1536
+        embedding1 = [1.0] * 384  # 384-dimensional (all-MiniLM-L6-v2)
+        embedding2 = [0.5] * 384
 
         await create_item(db_session, "Item 1", 1, "test", embedding=embedding1)
         await create_item(db_session, "Item 2", 2, "test", embedding=embedding2)
 
-        query_embedding = [0.9] * 1536
+        query_embedding = [0.9] * 384
         results = await search_items_by_embedding(db_session, query_embedding)
 
         assert len(results) == 2

@@ -15,6 +15,7 @@ from itemwise.database.models import Base
 
 # Set test environment variables
 os.environ["POSTGRES_DB"] = "inventory_test"
+os.environ["POSTGRES_PORT"] = os.environ.get("POSTGRES_PORT", "5433")  # Use 5433 for local testing
 
 
 @pytest.fixture(scope="session")
@@ -33,7 +34,7 @@ def test_settings() -> Settings:
         postgres_user="postgres",
         postgres_password="postgres",
         postgres_host="localhost",
-        postgres_port=5432,
+        postgres_port=int(os.environ.get("POSTGRES_PORT", "5433")),
         debug=True,
     )
 
