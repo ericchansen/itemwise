@@ -1,11 +1,11 @@
-# Inventory Assistant - Functional Specification
+# Itemwise - Functional Specification
 
 ## 1. Overview
 
-The Inventory Assistant is an AI-powered system for managing chest freezer inventory through natural language interactions. It provides a Model Context Protocol (MCP) server that enables AI agents to perform inventory operations while maintaining a complete audit trail.
+Itemwise is an AI-powered system for managing inventory through natural language interactions. It provides a Model Context Protocol (MCP) server that enables AI agents to perform inventory operations while maintaining a complete audit trail.
 
 ### Purpose
-Enable users to track items in their chest freezer and interact with the inventory using natural language queries through AI assistants like Claude.
+Enable users to track items across multiple locations and interact with the inventory using natural language queries through AI assistants like Claude.
 
 ### Key Features
 - Natural language inventory search using semantic similarity
@@ -287,10 +287,10 @@ alembic downgrade -1
 docker compose up -d
 
 # Run MCP server
-inventory-server
+itemwise-server
 
 # Or with uv
-uv run inventory-server
+uv run itemwise-server
 ```
 
 ### 8.3 Testing with MCP Client
@@ -300,7 +300,7 @@ Configure in Claude Desktop or compatible MCP client:
   "mcpServers": {
     "itemwise": {
       "command": "uv",
-      "args": ["run", "inventory-server"],
+      "args": ["run", "itemwise-server"],
       "cwd": "/path/to/itemwise"
     }
   }

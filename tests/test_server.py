@@ -371,7 +371,7 @@ class TestServerIntegration:
         """Test MCP server has correct name."""
         from itemwise.server import mcp
 
-        assert mcp.name == "inventory-assistant"
+        assert mcp.name == "itemwise"
 
 
 class TestLifespan:

@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: inventory-app
+    container_name: itemwise-app
     ports:
       - "8080:8080"
     environment:
@@ -29,7 +29,7 @@ services:
 
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: inventory-db
+    container_name: itemwise-db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}

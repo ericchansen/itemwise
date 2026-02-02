@@ -1,8 +1,8 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
 
-name: inventory-assistant
+name: itemwise
 metadata:
-  template: inventory-assistant@0.0.1
+  template: itemwise@0.0.1
   
 services:
   api:

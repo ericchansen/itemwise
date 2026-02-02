@@ -32,7 +32,7 @@ Open the config file and add:
   "mcpServers": {
     "itemwise": {
       "command": "uv",
-      "args": ["--directory", "C:\\Users\\erichansen\\repos\\itemwise", "run", "inventory-server"],
+      "args": ["--directory", "C:\\Users\\erichansen\\repos\\itemwise", "run", "itemwise-server"],
       "env": {
         "POSTGRES_HOST": "localhost",
         "POSTGRES_PORT": "5432",
@@ -101,7 +101,7 @@ docker compose logs postgres
 ### Test the server manually
 ```bash
 # This should start the server in stdio mode
-uv run inventory-server
+uv run itemwise-server
 ```
 
 ## Managing the Database
@@ -118,7 +118,7 @@ docker compose up -d
 
 ### View database directly
 ```bash
-docker exec -it inventory-db psql -U postgres -d inventory
+docker exec -it itemwise-db psql -U postgres -d inventory
 ```
 
 Then run SQL:

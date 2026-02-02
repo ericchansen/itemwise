@@ -1,4 +1,4 @@
-# Inventory Assistant
+# Itemwise
 
 AI-powered inventory management with natural language search. Track items across multiple locations (freezer, garage, pantry, battery bin - anywhere!) using conversational interfaces.
 
@@ -21,7 +21,7 @@ Built with FastMCP to enable AI agents like Claude to manage your inventory, plu
 
 ```bash
 git clone <repository-url>
-cd inventory-assistant
+cd itemwise
 
 # Copy environment template
 cp .env.example .env
@@ -69,7 +69,7 @@ Without Azure OpenAI, the chat will work in fallback mode with basic pattern mat
 **Option A: Web Interface (Recommended for demos)**
 ```bash
 # Start the web server
-uv run inventory-web
+uv run itemwise-web
 
 # Open http://localhost:8000 in your browser
 ```
@@ -77,7 +77,7 @@ uv run inventory-web
 **Option B: MCP Server (For AI agents like Claude)**
 ```bash
 # Start the MCP server
-uv run inventory-server
+uv run itemwise-server
 ```
 
 ## Web Interface
@@ -110,10 +110,10 @@ Add to your Claude Desktop configuration:
 ```json
 {
   "mcpServers": {
-    "inventory-assistant": {
+    "itemwise": {
       "command": "uv",
-      "args": ["run", "inventory-server"],
-      "cwd": "/path/to/inventory-assistant"
+      "args": ["run", "itemwise-server"],
+      "cwd": "/path/to/itemwise"
     }
   }
 }
@@ -205,7 +205,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-4o-mini
 ### Project Structure
 
 ```
-inventory-assistant/
+itemwise/
 ├── src/itemwise/
 │   ├── server.py        # MCP server and tools
 │   ├── api.py           # FastAPI REST API

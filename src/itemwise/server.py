@@ -59,7 +59,7 @@ async def lifespan(app: Any) -> AsyncGenerator[None, None]:
 
 # Initialize FastMCP server
 mcp = FastMCP(
-    name="inventory-assistant",
+    name="itemwise",
 )
 
 
