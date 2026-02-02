@@ -1,0 +1,269 @@
+param location string
+param tags object
+param resourceToken string
+param azureOpenAiEndpoint string
+param azureOpenAiDeployment string
+
+@secure()
+param postgresPassword string
+
+// Log Analytics Workspace
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+  name: 'log-${resourceToken}'
+  location: location
+  tags: tags
+  properties: {
+    sku: {
+      name: 'PerGB2018'
+    }
+    retentionInDays: 30
+  }
+}
+
+// Application Insights
+resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
+  name: 'appi-${resourceToken}'
+  location: location
+  tags: tags
+  kind: 'web'
+  properties: {
+    Application_Type: 'web'
+    WorkspaceResourceId: logAnalytics.id
+  }
+}
+
+// Container Registry
+resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
+  name: 'cr${resourceToken}'
+  location: location
+  tags: tags
+  sku: {
+    name: 'Basic'
+  }
+  properties: {
+    adminUserEnabled: false
+    anonymousPullEnabled: false
+  }
+}
+
+// User Assigned Managed Identity
+resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+  name: 'id-${resourceToken}'
+  location: location
+  tags: tags
+}
+
+// AcrPull Role Assignment for Managed Identity
+resource acrPullRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(containerRegistry.id, managedIdentity.id, '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+  scope: containerRegistry
+  properties: {
+    principalId: managedIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+  }
+}
+
+// PostgreSQL Flexible Server
+resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = {
+  name: 'psql-${resourceToken}'
+  location: location
+  tags: tags
+  sku: {
+    name: 'Standard_B1ms'
+    tier: 'Burstable'
+  }
+  properties: {
+    version: '16'
+    administratorLogin: 'inventoryadmin'
+    administratorLoginPassword: postgresPassword
+    storage: {
+      storageSizeGB: 32
+    }
+    backup: {
+      backupRetentionDays: 7
+      geoRedundantBackup: 'Disabled'
+    }
+    highAvailability: {
+      mode: 'Disabled'
+    }
+  }
+}
+
+// PostgreSQL Database
+resource postgresDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2023-12-01-preview' = {
+  parent: postgresServer
+  name: 'inventory'
+  properties: {
+    charset: 'UTF8'
+    collation: 'en_US.utf8'
+  }
+}
+
+// PostgreSQL Firewall Rule - Allow Azure Services
+resource postgresFirewallAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = {
+  parent: postgresServer
+  name: 'AllowAzureServices'
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '0.0.0.0'
+  }
+}
+
+// PostgreSQL pgvector extension
+resource postgresExtension 'Microsoft.DBforPostgreSQL/flexibleServers/configurations@2023-12-01-preview' = {
+  parent: postgresServer
+  name: 'azure.extensions'
+  properties: {
+    value: 'VECTOR'
+    source: 'user-override'
+  }
+}
+
+// Container Apps Environment
+resource containerAppsEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
+  name: 'cae-${resourceToken}'
+  location: location
+  tags: tags
+  properties: {
+    appLogsConfiguration: {
+      destination: 'log-analytics'
+      logAnalyticsConfiguration: {
+        customerId: logAnalytics.properties.customerId
+        sharedKey: logAnalytics.listKeys().primarySharedKey
+      }
+    }
+  }
+}
+
+// Container App - API
+resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+  name: 'ca-api-${resourceToken}'
+  location: location
+  tags: union(tags, {
+    'azd-service-name': 'api'
+  })
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${managedIdentity.id}': {}
+    }
+  }
+  properties: {
+    managedEnvironmentId: containerAppsEnv.id
+    configuration: {
+      activeRevisionsMode: 'Single'
+      ingress: {
+        external: true
+        targetPort: 8080
+        transport: 'http'
+        corsPolicy: {
+          allowedOrigins: ['*']
+          allowedMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
+          allowedHeaders: ['*']
+        }
+      }
+      registries: [
+        {
+          server: containerRegistry.properties.loginServer
+          identity: managedIdentity.id
+        }
+      ]
+      secrets: [
+        {
+          name: 'postgres-password'
+          value: postgresPassword
+        }
+        {
+          name: 'appinsights-connection-string'
+          value: appInsights.properties.ConnectionString
+        }
+      ]
+    }
+    template: {
+      containers: [
+        {
+          name: 'api'
+          // Using placeholder image - will be replaced by azd deploy
+          image: 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+          resources: {
+            cpu: json('0.5')
+            memory: '1Gi'
+          }
+          env: [
+            {
+              name: 'POSTGRES_HOST'
+              value: postgresServer.properties.fullyQualifiedDomainName
+            }
+            {
+              name: 'POSTGRES_PORT'
+              value: '5432'
+            }
+            {
+              name: 'POSTGRES_USER'
+              value: 'inventoryadmin'
+            }
+            {
+              name: 'POSTGRES_PASSWORD'
+              secretRef: 'postgres-password'
+            }
+            {
+              name: 'POSTGRES_DB'
+              value: 'inventory'
+            }
+            {
+              name: 'DATABASE_URL'
+              value: 'postgresql+asyncpg://inventoryadmin:${postgresPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/inventory?ssl=require'
+            }
+            {
+              name: 'AZURE_OPENAI_ENDPOINT'
+              value: azureOpenAiEndpoint
+            }
+            {
+              name: 'AZURE_OPENAI_DEPLOYMENT'
+              value: azureOpenAiDeployment
+            }
+            {
+              name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+              secretRef: 'appinsights-connection-string'
+            }
+            {
+              name: 'HF_HUB_OFFLINE'
+              value: '1'
+            }
+            {
+              name: 'TRANSFORMERS_OFFLINE'
+              value: '1'
+            }
+          ]
+        }
+      ]
+      scale: {
+        minReplicas: 0
+        maxReplicas: 3
+        rules: [
+          {
+            name: 'http-scaling'
+            http: {
+              metadata: {
+                concurrentRequests: '100'
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+  dependsOn: [
+    acrPullRoleAssignment
+  ]
+}
+
+// Outputs
+output containerRegistryEndpoint string = containerRegistry.properties.loginServer
+output containerRegistryName string = containerRegistry.name
+output apiEndpoint string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
+output postgresHost string = postgresServer.properties.fullyQualifiedDomainName
+output postgresDatabase string = postgresDatabase.name
+output logAnalyticsWorkspaceId string = logAnalytics.id
+output appInsightsConnectionString string = appInsights.properties.ConnectionString

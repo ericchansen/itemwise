@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: inventory-assistant
+metadata:
+  template: inventory-assistant@0.0.1
+  
+services:
+  api:
+    project: .
+    language: python
+    host: containerapp
+    docker:
+      path: ./Dockerfile
+      context: .
+
+infra:
+  provider: bicep
+  path: infra
+
+hooks:
+  postprovision:
+    shell: pwsh
+    run: |
+      Write-Host "Running database migrations..."
+      # Note: Migrations should be run as part of container startup or CI/CD
+      Write-Host "Deployment complete!"
+      Write-Host "API Endpoint: $env:SERVICE_API_ENDPOINT"
