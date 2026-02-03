@@ -25,11 +25,16 @@ MOCK_EMBEDDING = [0.1] * 384  # 384-dimensional vector (same as all-MiniLM-L6-v2
 
 @pytest.fixture(autouse=True)
 def mock_embeddings() -> Generator[None, None, None]:
-    """Mock embedding functions to avoid HuggingFace downloads in CI."""
-    with patch("itemwise.embeddings.generate_embedding", return_value=MOCK_EMBEDDING):
-        with patch("itemwise.embeddings.generate_embeddings", return_value=[MOCK_EMBEDDING]):
-            with patch("itemwise.embeddings.generate_embedding_cached", return_value=tuple(MOCK_EMBEDDING)):
-                yield
+    """Mock embedding functions to avoid HuggingFace downloads in CI.
+    
+    Must patch where the function is used, not where it's defined.
+    """
+    with patch("itemwise.server.generate_embedding", return_value=MOCK_EMBEDDING):
+        with patch("itemwise.api.generate_embedding", return_value=MOCK_EMBEDDING):
+            with patch("itemwise.embeddings.generate_embedding", return_value=MOCK_EMBEDDING):
+                with patch("itemwise.embeddings.generate_embeddings", return_value=[MOCK_EMBEDDING]):
+                    with patch("itemwise.embeddings.generate_embedding_cached", return_value=tuple(MOCK_EMBEDDING)):
+                        yield
 
 
 @pytest.fixture(scope="session")
