@@ -4,25 +4,35 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from pydantic import BaseModel, EmailStr, Field
 
 # Load environment variables from .env file (find it relative to this file)
 _env_path = Path(__file__).parent.parent.parent / ".env"
 load_dotenv(_env_path)
 
+from .auth import (
+    Token,
+    TokenData,
+    create_access_token,
+    decode_access_token,
+    hash_password,
+    verify_password,
+)
 from .database.crud import (
     create_item,
     create_location,
+    create_user,
     delete_item,
     get_item,
     get_or_create_location,
+    get_user_by_email,
     list_items,
     list_locations,
     log_transaction,
@@ -40,6 +50,9 @@ logger = logging.getLogger(__name__)
 # Get the frontend directory path
 FRONTEND_DIR = Path(__file__).parent.parent.parent / "frontend"
 
+# OAuth2 scheme for token authentication
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+
 # Check if Azure OpenAI is configured
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_ENABLED = bool(AZURE_OPENAI_ENDPOINT)
@@ -51,7 +64,20 @@ else:
     logger.warning("Azure OpenAI NOT configured - chat will use fallback mode")
 
 
-# Pydantic models for API
+# ===== Auth Models =====
+
+
+class UserRegister(BaseModel):
+    email: EmailStr = Field(..., description="Email address")
+    password: str = Field(..., min_length=8, description="Password (min 8 characters)")
+
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+
+
+# ===== Pydantic models for API =====
 class ItemCreate(BaseModel):
     name: str = Field(..., description="Name of the item")
     quantity: int = Field(..., ge=1, description="Quantity of items")
@@ -130,11 +156,93 @@ app.add_middleware(
 )
 
 
+# ===== Auth Dependency =====
+
+
+async def get_current_user(token: Annotated[str | None, Depends(oauth2_scheme)]) -> TokenData:
+    """Get current authenticated user from JWT token."""
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    token_data = decode_access_token(token)
+    if token_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    return token_data
+
+
+async def get_optional_user(token: Annotated[str | None, Depends(oauth2_scheme)]) -> TokenData | None:
+    """Get current user if authenticated, None otherwise."""
+    if token is None:
+        return None
+    return decode_access_token(token)
+
+
+# ===== Auth Endpoints =====
+
+
+@app.post("/api/auth/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def register(user_data: UserRegister):
+    """Register a new user account."""
+    async with AsyncSessionLocal() as session:
+        # Check if email already exists
+        existing = await get_user_by_email(session, user_data.email)
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered",
+            )
+        
+        # Create user with hashed password
+        password_hash = hash_password(user_data.password)
+        user = await create_user(session, user_data.email, password_hash)
+        
+        return UserResponse(id=user.id, email=user.email)
+
+
+@app.post("/api/auth/login", response_model=Token)
+async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
+    """Login and get access token."""
+    async with AsyncSessionLocal() as session:
+        user = await get_user_by_email(session, form_data.username)
+        
+        if not user or not verify_password(form_data.password, user.password_hash):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Account is disabled",
+            )
+        
+        access_token = create_access_token(user.id, user.email)
+        return Token(access_token=access_token)
+
+
+@app.get("/api/auth/me", response_model=UserResponse)
+async def get_me(current_user: Annotated[TokenData, Depends(get_current_user)]):
+    """Get current user info."""
+    return UserResponse(id=current_user.user_id, email=current_user.email)
+
+
 # ===== Item Endpoints =====
 
 
 @app.get("/api/items")
 async def get_items(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
     category: Optional[str] = Query(None, description="Filter by category"),
     location: Optional[str] = Query(None, description="Filter by location name"),
 ):
@@ -142,6 +250,7 @@ async def get_items(
     async with AsyncSessionLocal() as session:
         items = await list_items(
             session,
+            user_id=current_user.user_id,
             category=category,
             location_name=location,
         )
@@ -163,14 +272,17 @@ async def get_items(
 
 
 @app.post("/api/items")
-async def create_new_item(item: ItemCreate):
+async def create_new_item(
+    item: ItemCreate,
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+):
     """Add a new item to inventory."""
     async with AsyncSessionLocal() as session:
         # Get or create location if specified
         location_id = None
         location_name = None
         if item.location:
-            loc = await get_or_create_location(session, item.location.strip())
+            loc = await get_or_create_location(session, current_user.user_id, item.location.strip())
             location_id = loc.id
             location_name = loc.name
 
@@ -193,6 +305,7 @@ async def create_new_item(item: ItemCreate):
         # Create item
         new_item = await create_item(
             session,
+            user_id=current_user.user_id,
             name=item.name,
             quantity=item.quantity,
             category=item.category,
@@ -216,10 +329,13 @@ async def create_new_item(item: ItemCreate):
 
 
 @app.get("/api/items/{item_id}")
-async def get_single_item(item_id: int):
+async def get_single_item(
+    item_id: int,
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+):
     """Get a single item by ID."""
     async with AsyncSessionLocal() as session:
-        item = await get_item(session, item_id)
+        item = await get_item(session, current_user.user_id, item_id)
         if not item:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
         return {
@@ -234,10 +350,14 @@ async def get_single_item(item_id: int):
 
 
 @app.put("/api/items/{item_id}")
-async def update_existing_item(item_id: int, item: ItemUpdate):
+async def update_existing_item(
+    item_id: int,
+    item: ItemUpdate,
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+):
     """Update an existing item."""
     async with AsyncSessionLocal() as session:
-        existing = await get_item(session, item_id)
+        existing = await get_item(session, current_user.user_id, item_id)
         if not existing:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
 
@@ -245,7 +365,7 @@ async def update_existing_item(item_id: int, item: ItemUpdate):
         location_id = None
         if item.location is not None:
             if item.location:
-                loc = await get_or_create_location(session, item.location.strip())
+                loc = await get_or_create_location(session, current_user.user_id, item.location.strip())
                 location_id = loc.id
 
         # Generate new embedding if needed
@@ -268,6 +388,7 @@ async def update_existing_item(item_id: int, item: ItemUpdate):
         # Update item
         updated = await update_item(
             session,
+            user_id=current_user.user_id,
             item_id=item_id,
             name=item.name,
             quantity=item.quantity,
@@ -292,10 +413,13 @@ async def update_existing_item(item_id: int, item: ItemUpdate):
 
 
 @app.delete("/api/items/{item_id}")
-async def delete_existing_item(item_id: int):
+async def delete_existing_item(
+    item_id: int,
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+):
     """Delete an item from inventory."""
     async with AsyncSessionLocal() as session:
-        item = await get_item(session, item_id)
+        item = await get_item(session, current_user.user_id, item_id)
         if not item:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
 
@@ -309,7 +433,7 @@ async def delete_existing_item(item_id: int):
             data={"name": item_name},
         )
 
-        deleted = await delete_item(session, item_id)
+        deleted = await delete_item(session, current_user.user_id, item_id)
         if not deleted:
             raise HTTPException(status_code=500, detail="Failed to delete item")
 
@@ -323,7 +447,8 @@ async def delete_existing_item(item_id: int):
 
 
 @app.get("/api/search")
-async def search_items(
+async def search_items_endpoint(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
     q: str = Query(..., description="Search query"),
     location: Optional[str] = Query(None, description="Filter by location"),
 ):
@@ -341,12 +466,12 @@ async def search_items(
 
         # Semantic search
         semantic_results = await search_items_by_embedding(
-            session, query_embedding, location_name=location, limit=10
+            session, current_user.user_id, query_embedding, location_name=location, limit=10
         )
 
         # Text search fallback
         text_results = await search_items_by_text(
-            session, q, location_name=location, limit=10
+            session, current_user.user_id, q, location_name=location, limit=10
         )
 
         # Combine results
@@ -392,10 +517,12 @@ async def search_items(
 
 
 @app.get("/api/locations")
-async def get_all_locations():
-    """List all storage locations."""
+async def get_all_locations(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+):
+    """List all storage locations for the current user."""
     async with AsyncSessionLocal() as session:
-        locations = await list_locations(session)
+        locations = await list_locations(session, current_user.user_id)
         return {
             "count": len(locations),
             "locations": [
@@ -410,7 +537,10 @@ async def get_all_locations():
 
 
 @app.post("/api/locations")
-async def create_new_location(location: LocationCreate):
+async def create_new_location(
+    location: LocationCreate,
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+):
     """Create a new storage location."""
     async with AsyncSessionLocal() as session:
         # Generate embedding
@@ -419,6 +549,7 @@ async def create_new_location(location: LocationCreate):
 
         new_loc = await create_location(
             session,
+            user_id=current_user.user_id,
             name=location.name,
             description=location.description,
             embedding=embedding,
@@ -445,19 +576,22 @@ async def create_new_location(location: LocationCreate):
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(message: ChatMessage):
+async def chat(
+    message: ChatMessage,
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+):
     """Process a natural language message about inventory.
     
     Uses Azure OpenAI with tool calling if configured, otherwise
     falls back to simple pattern matching.
     """
     if AZURE_OPENAI_ENABLED:
-        return await _chat_with_ai(message.message)
+        return await _chat_with_ai(current_user.user_id, message.message)
     else:
-        return await _chat_fallback(message.message)
+        return await _chat_fallback(current_user.user_id, message.message)
 
 
-async def _chat_with_ai(user_message: str) -> ChatResponse:
+async def _chat_with_ai(user_id: int, user_message: str) -> ChatResponse:
     """Process chat using Azure OpenAI with tool calling."""
     from .ai_client import process_chat_with_tools, generate_display_name
 
@@ -479,7 +613,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
                 logger.warning(f"Failed to generate display name: {e}")
             
             # Get or create location
-            loc = await get_or_create_location(session, location.strip(), display_name=display_name)
+            loc = await get_or_create_location(session, user_id, location.strip(), display_name=display_name)
             
             # Generate embedding
             item_text = _get_item_text_for_embedding(name, description, category)
@@ -495,6 +629,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
             # Create item
             new_item = await create_item(
                 session,
+                user_id=user_id,
                 name=name,
                 quantity=quantity,
                 category=category,
@@ -516,7 +651,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
 
     async def handle_remove_item(item_id: int, quantity: int | None = None) -> dict:
         async with AsyncSessionLocal() as session:
-            item = await get_item(session, item_id)
+            item = await get_item(session, user_id, item_id)
             if not item:
                 return {"success": False, "error": f"Item {item_id} not found"}
             
@@ -526,19 +661,19 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
             if quantity is None or quantity >= current_qty:
                 # Remove completely
                 await log_transaction(session, operation="DELETE", item_id=item_id, data={"name": item_name})
-                await delete_item(session, item_id)
+                await delete_item(session, user_id, item_id)
                 return {"success": True, "message": f"Removed all {current_qty} {item_name}"}
             else:
                 # Reduce quantity
                 new_qty = current_qty - quantity
                 await log_transaction(session, operation="UPDATE", item_id=item_id, data={"quantity_removed": quantity})
-                await update_item(session, item_id, quantity=new_qty)
+                await update_item(session, user_id, item_id, quantity=new_qty)
                 return {"success": True, "message": f"Removed {quantity} {item_name}, {new_qty} remaining"}
 
     async def handle_search_items(query: str, location: str | None = None) -> dict:
         async with AsyncSessionLocal() as session:
             query_embedding = generate_embedding(query)
-            results = await search_items_by_embedding(session, query_embedding, location_name=location, limit=10)
+            results = await search_items_by_embedding(session, user_id, query_embedding, location_name=location, limit=10)
             
             if not results:
                 return {"success": True, "count": 0, "items": []}
@@ -560,7 +695,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
 
     async def handle_list_items(location: str | None = None, category: str | None = None) -> dict:
         async with AsyncSessionLocal() as session:
-            items = await list_items(session, location_name=location, category=category)
+            items = await list_items(session, user_id, location_name=location, category=category)
             return {
                 "success": True,
                 "count": len(items),
@@ -578,7 +713,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
 
     async def handle_list_locations() -> dict:
         async with AsyncSessionLocal() as session:
-            locations = await list_locations(session)
+            locations = await list_locations(session, user_id)
             return {
                 "success": True,
                 "count": len(locations),
@@ -605,7 +740,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
         )
 
 
-async def _chat_fallback(user_message: str) -> ChatResponse:
+async def _chat_fallback(user_id: int, user_message: str) -> ChatResponse:
     """Simple pattern-matching fallback when Azure OpenAI is not configured."""
     text = user_message.lower().strip()
     
@@ -619,7 +754,7 @@ async def _chat_fallback(user_message: str) -> ChatResponse:
                     location = loc_word.title()
                     break
             
-            items = await list_items(session, location_name=location)
+            items = await list_items(session, user_id, location_name=location)
             
             if not items:
                 return ChatResponse(
@@ -651,7 +786,7 @@ async def _chat_fallback(user_message: str) -> ChatResponse:
                 return ChatResponse(response="What would you like to search for?")
             
             query_embedding = generate_embedding(search_terms)
-            raw_results = await search_items_by_embedding(session, query_embedding, limit=5)
+            raw_results = await search_items_by_embedding(session, user_id, query_embedding, limit=5)
             
             # Filter by similarity threshold (distance < 1.0 means reasonably similar)
             results = [(item, dist) for item, dist in raw_results if dist < 1.0]

@@ -40,23 +40,86 @@
     </style>
 </head>
 <body class="bg-bg text-white min-h-screen">
-    <!-- Header -->
-    <header class="border-b border-border sticky top-0 z-10 bg-bg/90 backdrop-blur-sm">
-        <div class="max-w-2xl mx-auto px-6 py-4 flex items-center justify-between">
-            <h1 class="text-lg font-medium tracking-tight">inventory</h1>
-            <div class="flex gap-1 bg-surface rounded-lg p-1">
-                <button onclick="showTab('chat')" id="tab-chat" class="tab-btn px-4 py-1.5 rounded-md text-sm transition-all bg-white/10 text-white">
-                    chat
-                </button>
-                <button onclick="showTab('inventory')" id="tab-inventory" class="tab-btn px-4 py-1.5 rounded-md text-sm transition-all text-muted hover:text-white">
-                    items
-                </button>
+    <!-- Auth View (Login/Register) -->
+    <div id="auth-view" class="min-h-screen flex items-center justify-center px-4">
+        <div class="w-full max-w-sm">
+            <h1 class="text-2xl font-medium text-center mb-8">inventory</h1>
+            
+            <!-- Login Form -->
+            <div id="login-form" class="bg-surface border border-border rounded-2xl p-6">
+                <h2 class="text-lg font-medium mb-6">Sign in</h2>
+                <form onsubmit="handleLogin(event)" class="space-y-4">
+                    <div>
+                        <input type="email" id="login-email" required placeholder="Email" 
+                            class="w-full px-4 py-3 bg-card border border-border rounded-xl text-white placeholder-muted">
+                    </div>
+                    <div>
+                        <input type="password" id="login-password" required placeholder="Password" 
+                            class="w-full px-4 py-3 bg-card border border-border rounded-xl text-white placeholder-muted">
+                    </div>
+                    <div id="login-error" class="text-red-400 text-sm hidden"></div>
+                    <button type="submit" class="w-full px-4 py-3 bg-white text-black rounded-xl font-medium hover:bg-white/90 transition-all">
+                        Sign in
+                    </button>
+                </form>
+                <p class="text-center text-muted text-sm mt-4">
+                    Don't have an account? 
+                    <button onclick="showAuthForm('register')" class="text-accent hover:underline">Register</button>
+                </p>
+            </div>
+
+            <!-- Register Form -->
+            <div id="register-form" class="bg-surface border border-border rounded-2xl p-6 hidden">
+                <h2 class="text-lg font-medium mb-6">Create account</h2>
+                <form onsubmit="handleRegister(event)" class="space-y-4">
+                    <div>
+                        <input type="email" id="register-email" required placeholder="Email" 
+                            class="w-full px-4 py-3 bg-card border border-border rounded-xl text-white placeholder-muted">
+                    </div>
+                    <div>
+                        <input type="password" id="register-password" required minlength="8" placeholder="Password (min 8 chars)" 
+                            class="w-full px-4 py-3 bg-card border border-border rounded-xl text-white placeholder-muted">
+                    </div>
+                    <div>
+                        <input type="password" id="register-confirm" required placeholder="Confirm password" 
+                            class="w-full px-4 py-3 bg-card border border-border rounded-xl text-white placeholder-muted">
+                    </div>
+                    <div id="register-error" class="text-red-400 text-sm hidden"></div>
+                    <button type="submit" class="w-full px-4 py-3 bg-white text-black rounded-xl font-medium hover:bg-white/90 transition-all">
+                        Create account
+                    </button>
+                </form>
+                <p class="text-center text-muted text-sm mt-4">
+                    Already have an account? 
+                    <button onclick="showAuthForm('login')" class="text-accent hover:underline">Sign in</button>
+                </p>
             </div>
         </div>
-    </header>
+    </div>
 
-    <!-- Main -->
-    <main class="max-w-2xl mx-auto px-6 py-6">
+    <!-- App View (Main App) -->
+    <div id="app-view" class="hidden">
+        <!-- Header -->
+        <header class="border-b border-border sticky top-0 z-10 bg-bg/90 backdrop-blur-sm">
+            <div class="max-w-2xl mx-auto px-6 py-4 flex items-center justify-between">
+                <h1 class="text-lg font-medium tracking-tight">inventory</h1>
+                <div class="flex items-center gap-4">
+                    <div class="flex gap-1 bg-surface rounded-lg p-1">
+                        <button onclick="showTab('chat')" id="tab-chat" class="tab-btn px-4 py-1.5 rounded-md text-sm transition-all bg-white/10 text-white">
+                            chat
+                        </button>
+                        <button onclick="showTab('inventory')" id="tab-inventory" class="tab-btn px-4 py-1.5 rounded-md text-sm transition-all text-muted hover:text-white">
+                            items
+                        </button>
+                    </div>
+                    <button onclick="logout()" class="text-muted hover:text-white text-sm transition-colors">
+                        logout
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <main class="max-w-2xl mx-auto px-6 py-6">
         <!-- Chat Tab -->
         <div id="chat-tab" class="tab-content">
             <!-- Chat Container -->
@@ -131,6 +194,7 @@
             </div>
         </div>
     </main>
+    </div> <!-- End app-view -->
 
     <!-- Add Modal -->
     <div id="add-item-modal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden items-center justify-center z-50 p-4">
@@ -168,6 +232,128 @@
     <script>
         const API_URL = window.location.origin;
         let searchTimeout;
+        let authToken = localStorage.getItem('authToken');
+
+        // ===== Auth Functions =====
+        
+        function showAuthForm(form) {
+            document.getElementById('login-form').classList.toggle('hidden', form !== 'login');
+            document.getElementById('register-form').classList.toggle('hidden', form !== 'register');
+            document.getElementById('login-error').classList.add('hidden');
+            document.getElementById('register-error').classList.add('hidden');
+        }
+
+        function showAuthView() {
+            document.getElementById('auth-view').classList.remove('hidden');
+            document.getElementById('app-view').classList.add('hidden');
+        }
+
+        function showAppView() {
+            document.getElementById('auth-view').classList.add('hidden');
+            document.getElementById('app-view').classList.remove('hidden');
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const email = document.getElementById('login-email').value;
+            const password = document.getElementById('login-password').value;
+            const errorEl = document.getElementById('login-error');
+            
+            try {
+                const formData = new URLSearchParams();
+                formData.append('username', email);
+                formData.append('password', password);
+                
+                const res = await fetch(`${API_URL}/api/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: formData
+                });
+                
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.detail || 'Login failed');
+                }
+                
+                const data = await res.json();
+                authToken = data.access_token;
+                localStorage.setItem('authToken', authToken);
+                showAppView();
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.classList.remove('hidden');
+            }
+        }
+
+        async function handleRegister(e) {
+            e.preventDefault();
+            const email = document.getElementById('register-email').value;
+            const password = document.getElementById('register-password').value;
+            const confirm = document.getElementById('register-confirm').value;
+            const errorEl = document.getElementById('register-error');
+            
+            if (password !== confirm) {
+                errorEl.textContent = 'Passwords do not match';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            
+            try {
+                const res = await fetch(`${API_URL}/api/auth/register`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                if (!res.ok) {
+                    const data = await res.json();
+                    throw new Error(data.detail || 'Registration failed');
+                }
+                
+                // Auto-login after registration
+                showAuthForm('login');
+                document.getElementById('login-email').value = email;
+                document.getElementById('login-password').value = password;
+                handleLogin(e);
+            } catch (err) {
+                errorEl.textContent = err.message;
+                errorEl.classList.remove('hidden');
+            }
+        }
+
+        function logout() {
+            authToken = null;
+            localStorage.removeItem('authToken');
+            showAuthView();
+        }
+
+        function getAuthHeaders() {
+            return authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+        }
+
+        // Check auth on load
+        async function checkAuth() {
+            if (!authToken) {
+                showAuthView();
+                return;
+            }
+            
+            try {
+                const res = await fetch(`${API_URL}/api/auth/me`, {
+                    headers: getAuthHeaders()
+                });
+                
+                if (res.ok) {
+                    showAppView();
+                } else {
+                    logout();
+                }
+            } catch (e) {
+                logout();
+            }
+        }
+
+        // ===== App Functions =====
 
         function showTab(tab) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
@@ -198,9 +384,10 @@
             try {
                 const res = await fetch(`${API_URL}/api/chat`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                     body: JSON.stringify({ message: text })
                 });
+                if (res.status === 401) { logout(); return; }
                 const data = await res.json();
                 addMessage(data.response.replace(/\n/g, '<br>'));
             } catch (e) {
@@ -220,7 +407,8 @@
             if (location) url += `${search ? '&' : ''}location=${encodeURIComponent(location)}`;
             
             try {
-                const res = await fetch(url);
+                const res = await fetch(url, { headers: getAuthHeaders() });
+                if (res.status === 401) { logout(); return; }
                 const data = await res.json();
                 const items = data.items || data.results || [];
                 const list = document.getElementById('items-list');
@@ -248,7 +436,8 @@
 
         async function loadLocations() {
             try {
-                const res = await fetch(`${API_URL}/api/locations`);
+                const res = await fetch(`${API_URL}/api/locations`, { headers: getAuthHeaders() });
+                if (res.status === 401) { logout(); return; }
                 const data = await res.json();
                 const select = document.getElementById('location-filter');
                 const val = select.value;
@@ -289,9 +478,10 @@
             try {
                 const res = await fetch(`${API_URL}/api/items`, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
                     body: JSON.stringify(item)
                 });
+                if (res.status === 401) { logout(); return; }
                 if (res.ok) { hideAddItemModal(); loadInventory(); loadLocations(); }
             } catch (e) {}
         }
@@ -299,10 +489,17 @@
         async function deleteItem(id) {
             if (!confirm('Delete this item?')) return;
             try {
-                const res = await fetch(`${API_URL}/api/items/${id}`, { method: 'DELETE' });
+                const res = await fetch(`${API_URL}/api/items/${id}`, { 
+                    method: 'DELETE',
+                    headers: getAuthHeaders()
+                });
+                if (res.status === 401) { logout(); return; }
                 if (res.ok) loadInventory();
             } catch (e) {}
         }
+
+        // Initialize on page load
+        checkAuth();
     </script>
 </body>
 </html>

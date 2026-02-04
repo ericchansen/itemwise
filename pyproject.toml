@@ -20,6 +20,9 @@ dependencies = [
     "azure-identity>=1.15.0",
     "playwright>=1.58.0",
     "httpx>=0.28.1",
+    "passlib[bcrypt]>=1.7.0",
+    "python-jose[cryptography]>=3.3.0",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -62,3 +65,9 @@ disallow_untyped_decorators = false
 [[tool.mypy.overrides]]
 module = ["alembic", "alembic.*"]
 ignore_errors = true
+
+[tool.ruff]
+line-length = 140
+
+[tool.ruff.lint]
+ignore = ["E402", "F821"]

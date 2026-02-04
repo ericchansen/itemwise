@@ -9,7 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import InventoryItem, Location, TransactionLog
+from .models import InventoryItem, Location, TransactionLog, User
 
 logger = logging.getLogger(__name__)
 
@@ -37,11 +37,73 @@ def normalize_location_name(name: str) -> str:
     return normalized.strip()
 
 
+# ===== User Operations =====
+
+
+async def create_user(
+    session: AsyncSession,
+    email: str,
+    password_hash: str,
+) -> User:
+    """Create a new user.
+
+    Args:
+        session: Database session
+        email: User's email address
+        password_hash: Hashed password
+
+    Returns:
+        The created user
+    """
+    user = User(
+        email=email.lower().strip(),
+        password_hash=password_hash,
+    )
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    logger.info(f"Created user: {user.email} (id={user.id})")
+    return user
+
+
+async def get_user_by_email(session: AsyncSession, email: str) -> Optional[User]:
+    """Get a user by email address.
+
+    Args:
+        session: Database session
+        email: User's email address
+
+    Returns:
+        The user if found, None otherwise
+    """
+    result = await session.execute(
+        select(User).where(User.email == email.lower().strip())
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_user_by_id(session: AsyncSession, user_id: int) -> Optional[User]:
+    """Get a user by ID.
+
+    Args:
+        session: Database session
+        user_id: User's ID
+
+    Returns:
+        The user if found, None otherwise
+    """
+    result = await session.execute(
+        select(User).where(User.id == user_id)
+    )
+    return result.scalar_one_or_none()
+
+
 # ===== Location Operations =====
 
 
 async def create_location(
     session: AsyncSession,
+    user_id: int,
     name: str,
     description: Optional[str] = None,
     embedding: Optional[list[float]] = None,
@@ -51,6 +113,7 @@ async def create_location(
 
     Args:
         session: Database session
+        user_id: ID of the owning user
         name: Display name of the location (e.g., "Tim's Pocket")
         description: Optional description
         embedding: Optional vector embedding for semantic search
@@ -63,6 +126,7 @@ async def create_location(
         normalized_name = normalize_location_name(name)
     
     location = Location(
+        user_id=user_id,
         name=name,
         normalized_name=normalized_name,
         description=description,
@@ -91,11 +155,12 @@ async def get_location(session: AsyncSession, location_id: int) -> Optional[Loca
     return result.scalar_one_or_none()
 
 
-async def get_location_by_name(session: AsyncSession, name: str) -> Optional[Location]:
-    """Get a location by normalized name.
+async def get_location_by_name(session: AsyncSession, user_id: int, name: str) -> Optional[Location]:
+    """Get a location by normalized name for a specific user.
 
     Args:
         session: Database session
+        user_id: ID of the owning user
         name: Name of the location (will be normalized for lookup)
 
     Returns:
@@ -103,28 +168,33 @@ async def get_location_by_name(session: AsyncSession, name: str) -> Optional[Loc
     """
     normalized = normalize_location_name(name)
     result = await session.execute(
-        select(Location).where(Location.normalized_name == normalized)
+        select(Location).where(
+            Location.user_id == user_id,
+            Location.normalized_name == normalized
+        )
     )
     return result.scalar_one_or_none()
 
 
-async def list_locations(session: AsyncSession) -> list[Location]:
-    """List all locations.
+async def list_locations(session: AsyncSession, user_id: int) -> list[Location]:
+    """List all locations for a user.
 
     Args:
         session: Database session
+        user_id: ID of the owning user
 
     Returns:
-        List of all locations
+        List of all locations for the user
     """
     result = await session.execute(
-        select(Location).order_by(Location.name)
+        select(Location).where(Location.user_id == user_id).order_by(Location.name)
     )
     return list(result.scalars().all())
 
 
 async def get_or_create_location(
     session: AsyncSession,
+    user_id: int,
     name: str,
     description: Optional[str] = None,
     embedding: Optional[list[float]] = None,
@@ -134,6 +204,7 @@ async def get_or_create_location(
 
     Args:
         session: Database session
+        user_id: ID of the owning user
         name: Name of the location (any format - will be normalized for lookup)
         description: Optional description (used only if creating)
         embedding: Optional embedding (used only if creating)
@@ -142,8 +213,8 @@ async def get_or_create_location(
     Returns:
         The existing or newly created location
     """
-    # Try to find existing location by normalized name
-    location = await get_location_by_name(session, name)
+    # Try to find existing location by normalized name for this user
+    location = await get_location_by_name(session, user_id, name)
     if location:
         return location
     
@@ -154,7 +225,7 @@ async def get_or_create_location(
     if not display_name:
         display_name = name.title()
     
-    return await create_location(session, display_name, description, embedding, normalized)
+    return await create_location(session, user_id, display_name, description, embedding, normalized)
 
 
 # ===== Inventory Item Operations =====
@@ -162,6 +233,7 @@ async def get_or_create_location(
 
 async def create_item(
     session: AsyncSession,
+    user_id: int,
     name: str,
     quantity: int,
     category: str,
@@ -173,6 +245,7 @@ async def create_item(
 
     Args:
         session: Database session
+        user_id: ID of the owning user
         name: Name of the item
         quantity: Quantity of the item
         category: Category (e.g., "meat", "vegetables", "electronics")
@@ -184,6 +257,7 @@ async def create_item(
         The created inventory item
     """
     item = InventoryItem(
+        user_id=user_id,
         name=name,
         quantity=quantity,
         category=category,
@@ -198,20 +272,21 @@ async def create_item(
     return item
 
 
-async def get_item(session: AsyncSession, item_id: int) -> Optional[InventoryItem]:
-    """Get an inventory item by ID.
+async def get_item(session: AsyncSession, user_id: int, item_id: int) -> Optional[InventoryItem]:
+    """Get an inventory item by ID for a specific user.
 
     Args:
         session: Database session
+        user_id: ID of the owning user
         item_id: ID of the item to retrieve
 
     Returns:
-        The inventory item if found, None otherwise
+        The inventory item if found and owned by user, None otherwise
     """
     result = await session.execute(
         select(InventoryItem)
         .options(selectinload(InventoryItem.location))
-        .where(InventoryItem.id == item_id)
+        .where(InventoryItem.id == item_id, InventoryItem.user_id == user_id)
     )
     item: InventoryItem | None = result.scalar_one_or_none()
     return item
@@ -219,15 +294,17 @@ async def get_item(session: AsyncSession, item_id: int) -> Optional[InventoryIte
 
 async def list_items(
     session: AsyncSession,
+    user_id: int,
     category: Optional[str] = None,
     location_id: Optional[int] = None,
     location_name: Optional[str] = None,
     limit: int = 100,
 ) -> list[InventoryItem]:
-    """List inventory items with optional filtering.
+    """List inventory items for a user with optional filtering.
 
     Args:
         session: Database session
+        user_id: ID of the owning user
         category: Optional category filter
         location_id: Optional location ID filter
         location_name: Optional location name filter (case-insensitive)
@@ -236,7 +313,11 @@ async def list_items(
     Returns:
         List of inventory items
     """
-    query = select(InventoryItem).options(selectinload(InventoryItem.location))
+    query = (
+        select(InventoryItem)
+        .options(selectinload(InventoryItem.location))
+        .where(InventoryItem.user_id == user_id)
+    )
 
     if category:
         query = query.where(InventoryItem.category == category)
@@ -256,6 +337,7 @@ async def list_items(
 
 async def update_item(
     session: AsyncSession,
+    user_id: int,
     item_id: int,
     name: Optional[str] = None,
     quantity: Optional[int] = None,
@@ -268,6 +350,7 @@ async def update_item(
 
     Args:
         session: Database session
+        user_id: ID of the owning user
         item_id: ID of the item to update
         name: New name (if provided)
         quantity: New quantity (if provided)
@@ -277,9 +360,9 @@ async def update_item(
         embedding: New embedding (if provided)
 
     Returns:
-        The updated item if found, None otherwise
+        The updated item if found and owned by user, None otherwise
     """
-    item = await get_item(session, item_id)
+    item = await get_item(session, user_id, item_id)
     if not item:
         return None
 
@@ -302,18 +385,22 @@ async def update_item(
     return item
 
 
-async def delete_item(session: AsyncSession, item_id: int) -> bool:
+async def delete_item(session: AsyncSession, user_id: int, item_id: int) -> bool:
     """Delete an inventory item.
 
     Args:
         session: Database session
+        user_id: ID of the owning user
         item_id: ID of the item to delete
 
     Returns:
-        True if item was deleted, False if not found
+        True if item was deleted, False if not found or not owned by user
     """
     result = await session.execute(
-        delete(InventoryItem).where(InventoryItem.id == item_id)
+        delete(InventoryItem).where(
+            InventoryItem.id == item_id,
+            InventoryItem.user_id == user_id
+        )
     )
     await session.commit()
 
@@ -325,6 +412,7 @@ async def delete_item(session: AsyncSession, item_id: int) -> bool:
 
 async def search_items_by_text(
     session: AsyncSession,
+    user_id: int,
     query: str,
     location_id: Optional[int] = None,
     location_name: Optional[str] = None,
@@ -334,6 +422,7 @@ async def search_items_by_text(
 
     Args:
         session: Database session
+        user_id: ID of the owning user
         query: Search query
         location_id: Optional location ID filter
         location_name: Optional location name filter
@@ -346,6 +435,7 @@ async def search_items_by_text(
         select(InventoryItem)
         .options(selectinload(InventoryItem.location))
         .where(
+            InventoryItem.user_id == user_id,
             (InventoryItem.name.ilike(f"%{query}%"))
             | (InventoryItem.description.ilike(f"%{query}%"))
         )
@@ -365,6 +455,7 @@ async def search_items_by_text(
 
 async def search_items_by_embedding(
     session: AsyncSession,
+    user_id: int,
     query_embedding: list[float],
     location_id: Optional[int] = None,
     location_name: Optional[str] = None,
@@ -374,6 +465,7 @@ async def search_items_by_embedding(
 
     Args:
         session: Database session
+        user_id: ID of the owning user
         query_embedding: Vector embedding of the search query
         location_id: Optional location ID filter
         location_name: Optional location name filter
@@ -388,7 +480,10 @@ async def search_items_by_embedding(
     stmt = (
         select(InventoryItem, distance)
         .options(selectinload(InventoryItem.location))
-        .where(InventoryItem.embedding.isnot(None))
+        .where(
+            InventoryItem.user_id == user_id,
+            InventoryItem.embedding.isnot(None)
+        )
     )
 
     if location_id:

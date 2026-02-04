@@ -3,12 +3,15 @@
 from .crud import (
     create_item,
     create_location,
+    create_user,
     delete_item,
     get_item,
     get_location,
     get_location_by_name,
     get_or_create_location,
     get_transaction_logs,
+    get_user_by_email,
+    get_user_by_id,
     list_items,
     list_locations,
     log_transaction,
@@ -18,7 +21,7 @@ from .crud import (
     update_item,
 )
 from .engine import AsyncSessionLocal, close_db, get_session, init_db
-from .models import Base, InventoryItem, Location, TransactionLog
+from .models import Base, InventoryItem, Location, TransactionLog, User
 
 __all__ = [
     # Models
@@ -26,11 +29,16 @@ __all__ = [
     "InventoryItem",
     "Location",
     "TransactionLog",
+    "User",
     # Engine
     "AsyncSessionLocal",
     "init_db",
     "close_db",
     "get_session",
+    # CRUD - Users
+    "create_user",
+    "get_user_by_email",
+    "get_user_by_id",
     # CRUD - Items
     "create_item",
     "get_item",

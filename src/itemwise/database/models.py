@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 # Embedding dimension for sentence-transformers all-MiniLM-L6-v2 model
@@ -17,14 +17,37 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    """Model for authenticated users."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    if TYPE_CHECKING:
+        locations: Mapped[list["Location"]]
+        items: Mapped[list["InventoryItem"]]
+
+    def __repr__(self) -> str:
+        return f"<User(id={self.id}, email='{self.email}')>"
+
+
 class Location(Base):
     """Model for storage locations (freezer, garage, closet, etc.)."""
 
     __tablename__ = "locations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False, index=True)  # Display name (e.g., "Tim's Pocket")
-    normalized_name: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)  # For matching (e.g., "tims pocket")
+    normalized_name: Mapped[str] = mapped_column(String, nullable=False, index=True)  # For matching (e.g., "tims pocket")
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     embedding: Mapped[Optional[list[float]]] = mapped_column(
         Vector(EMBEDDING_DIMENSION), nullable=True
@@ -33,10 +56,12 @@ class Location(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    # Relationship to items
+    # Relationship to user
     if TYPE_CHECKING:
+        user: Mapped["User"]
         items: Mapped[list["InventoryItem"]]
     else:
+        user = relationship("User", backref="locations")
         items = relationship("InventoryItem", back_populates="location")
 
     def __repr__(self) -> str:
@@ -49,6 +74,7 @@ class InventoryItem(Base):
     __tablename__ = "inventory_items"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False, index=True)
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     category: Mapped[str] = mapped_column(String, index=True)
@@ -66,10 +92,12 @@ class InventoryItem(Base):
         DateTime(timezone=True), onupdate=func.now(), nullable=True
     )
 
-    # Relationship to location
+    # Relationships
     if TYPE_CHECKING:
+        user: Mapped["User"]
         location: Mapped[Optional["Location"]]
     else:
+        user = relationship("User", backref="items")
         location = relationship("Location", back_populates="items")
 
     def __repr__(self) -> str:
