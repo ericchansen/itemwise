@@ -75,18 +75,24 @@ async def create_location(
     return location
 
 
-async def get_location(session: AsyncSession, location_id: int) -> Optional[Location]:
-    """Get a location by ID.
+async def get_location(
+    session: AsyncSession, user_id: int, location_id: int
+) -> Optional[Location]:
+    """Get a location by ID, filtered by user_id for security.
 
     Args:
         session: Database session
+        user_id: ID of the owning user (prevents IDOR attacks)
         location_id: ID of the location to retrieve
 
     Returns:
-        The location if found, None otherwise
+        The location if found and owned by user, None otherwise
     """
     result = await session.execute(
-        select(Location).where(Location.id == location_id)
+        select(Location).where(
+            Location.id == location_id,
+            Location.user_id == user_id,
+        )
     )
     return result.scalar_one_or_none()
 

@@ -194,10 +194,28 @@ POSTGRES_PORT=5432
 
 # Application
 DEBUG=false
+ENV=production  # or 'development'
+
+# Security - REQUIRED for production
+# Generate a secure key:
+#   python -c "import secrets; print(secrets.token_urlsafe(32))"
+SECRET_KEY=your-secure-random-key-here
 
 # Azure OpenAI (optional - enables intelligent chat)
 AZURE_OPENAI_ENDPOINT=https://your-resource.cognitiveservices.azure.com/
 AZURE_OPENAI_DEPLOYMENT=gpt-4o-mini
+```
+
+### Security Note
+
+The `SECRET_KEY` (or `JWT_SECRET_KEY`) environment variable is **required** when:
+- `DEBUG=false` (default), or
+- `ENV=production` or `ENV=prod`
+
+The application will raise an error on startup if SECRET_KEY is not set in production environments. Generate a secure key with:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
 ## Development
@@ -210,6 +228,7 @@ itemwise/
 │   ├── server.py        # MCP server and tools
 │   ├── api.py           # FastAPI REST API
 │   ├── ai_client.py     # Azure OpenAI integration
+│   ├── auth.py          # Authentication & security
 │   ├── embeddings.py    # Semantic search embeddings
 │   ├── config.py        # Settings
 │   └── database/
