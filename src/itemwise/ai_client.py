@@ -151,7 +151,8 @@ INVENTORY_TOOLS = [
     },
 ]
 
-SYSTEM_PROMPT = """You are an inventory management assistant. You help users track items they have stored in various locations like freezers, garages, pantries, closets, and storage bins.
+SYSTEM_PROMPT = """You are an inventory management assistant. You help users track items
+stored in various locations like freezers, garages, pantries, closets, and storage bins.
 
 Your capabilities:
 - Add items to inventory (with name, quantity, category, and location)
@@ -160,7 +161,8 @@ Your capabilities:
 - List items by location or category
 
 When users describe items naturally, extract the relevant details. For example:
-- "I put 3 bags of frozen chicken in the freezer" → add_item with name="frozen chicken bags", quantity=3, category="meat", location="Freezer"
+- "I put 3 bags of frozen chicken in the freezer" → add_item with name="frozen chicken bags",
+  quantity=3, category="meat", location="Freezer"
 - "Do I have any batteries?" → search_items with query="batteries"
 - "What's in the garage?" → list_items with location="Garage"
 - "I used 2 of the AA batteries" → first search, then remove_item with appropriate quantity
@@ -267,7 +269,6 @@ def generate_display_name(raw_name: str) -> str:
     Returns:
         Properly formatted display name (e.g., "Tim's Pocket", "Garage")
     """
-    import re
     
     # Common name patterns that should be possessive
     # Words ending in 's' that look like names followed by a non-'s' word
@@ -277,8 +278,8 @@ def generate_display_name(raw_name: str) -> str:
     for i, word in enumerate(words):
         # Check if this looks like a possessive name (ends in 's', followed by another word)
         # Common names: tims, bobs, jacks, marys, lisas, annas, sams, etc.
-        if (i < len(words) - 1 and 
-            word.endswith('s') and 
+        if (i < len(words) - 1 and
+            word.endswith('s') and
             len(word) >= 3 and
             not word.endswith('ss') and  # Not words like "glass"
             word[:-1].isalpha()):  # The base is all letters
