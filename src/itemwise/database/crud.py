@@ -9,7 +9,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import InventoryItem, Location, TransactionLog
+from .models import InventoryItem, Location, TransactionLog, User
 
 logger = logging.getLogger(__name__)
 
@@ -469,3 +469,46 @@ async def get_transaction_logs(
 
     result = await session.execute(query)
     return list(result.scalars().all())
+
+
+# ===== User Operations =====
+
+
+async def create_user(
+    session: AsyncSession,
+    email: str,
+    hashed_password: str,
+) -> User:
+    """Create a new user.
+
+    Args:
+        session: Database session
+        email: User's email address
+        hashed_password: Pre-hashed password
+
+    Returns:
+        The created user
+    """
+    user = User(email=email, hashed_password=hashed_password)
+    session.add(user)
+    await session.commit()
+    await session.refresh(user)
+    logger.info(f"Created user: {user.email} (id={user.id})")
+    return user
+
+
+async def get_user_by_email(
+    session: AsyncSession,
+    email: str,
+) -> Optional[User]:
+    """Get a user by email address.
+
+    Args:
+        session: Database session
+        email: Email address to look up
+
+    Returns:
+        The user if found, None otherwise
+    """
+    result = await session.execute(select(User).where(User.email == email))
+    return result.scalar_one_or_none()

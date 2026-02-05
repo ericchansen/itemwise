@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 # Embedding dimension for sentence-transformers all-MiniLM-L6-v2 model
@@ -17,14 +17,34 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    """Model for user accounts."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
+    hashed_password: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    def __repr__(self) -> str:
+        return f"<User(id={self.id}, email='{self.email}')>"
+
+
 class Location(Base):
     """Model for storage locations (freezer, garage, closet, etc.)."""
 
     __tablename__ = "locations"
+    __table_args__ = (
+        UniqueConstraint('user_id', 'normalized_name', name='uq_location_user_normalized_name'),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False, index=True)  # Display name (e.g., "Tim's Pocket")
-    normalized_name: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)  # For matching (e.g., "tims pocket")
+    normalized_name: Mapped[str] = mapped_column(String, nullable=False, index=True)  # For matching (e.g., "tims pocket")
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     embedding: Mapped[Optional[list[float]]] = mapped_column(
         Vector(EMBEDDING_DIMENSION), nullable=True
