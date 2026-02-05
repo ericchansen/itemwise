@@ -10,7 +10,8 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy.exc import IntegrityError
 
 # Load environment variables from .env file (find it relative to this file)
 _env_path = Path(__file__).parent.parent.parent / ".env"
@@ -19,6 +20,7 @@ load_dotenv(_env_path)
 from .database.crud import (
     create_item,
     create_location,
+    create_user,
     delete_item,
     get_item,
     get_or_create_location,
@@ -31,6 +33,7 @@ from .database.crud import (
 )
 from .database.engine import AsyncSessionLocal, close_db, init_db
 from .embeddings import generate_embedding
+from .auth import hash_password, create_access_token, create_refresh_token, Token
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -70,6 +73,11 @@ class ItemUpdate(BaseModel):
 class LocationCreate(BaseModel):
     name: str = Field(..., description="Name of the location")
     description: Optional[str] = Field(None, description="Optional description")
+
+
+class UserRegister(BaseModel):
+    email: EmailStr = Field(..., description="User's email address")
+    password: str = Field(..., min_length=8, description="User's password (min 8 characters)")
 
 
 class ChatMessage(BaseModel):
@@ -127,6 +135,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ===== Auth Endpoints =====
+
+
+@app.post("/api/auth/register", response_model=Token)
+async def register(user_data: UserRegister):
+    """Register a new user account.
+
+    Returns access and refresh tokens on successful registration.
+    """
+    async with AsyncSessionLocal() as session:
+        hashed_password = hash_password(user_data.password)
+        try:
+            user = await create_user(session, user_data.email, hashed_password)
+        except IntegrityError:
+            await session.rollback()
+            raise HTTPException(status_code=400, detail="Email already registered")
+
+        access_token = create_access_token(user.id, user.email)
+        refresh_token = create_refresh_token(user.id, user.email)
+
+        return Token(access_token=access_token, refresh_token=refresh_token)
 
 
 # ===== Item Endpoints =====
