@@ -18,10 +18,10 @@ MODEL_NAME = "all-MiniLM-L6-v2"
 EMBEDDING_DIMENSION = 384
 
 # Lazy-loaded model instance
-_model: Optional["SentenceTransformer"] = None  # type: ignore[name-defined]
+_model: Optional["SentenceTransformer"] = None  # noqa: F821 - lazy import for startup performance
 
 
-def _get_model() -> "SentenceTransformer":  # type: ignore[name-defined]
+def _get_model() -> "SentenceTransformer":  # noqa: F821 - lazy import for startup performance
     """Get or initialize the sentence transformer model (lazy loading)."""
     global _model
     if _model is None:
