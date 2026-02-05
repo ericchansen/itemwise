@@ -8,10 +8,12 @@ from itemwise.config import Settings
 class TestSettings:
     """Tests for Settings class."""
 
-    def test_default_settings(self) -> None:
+    def test_default_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test default configuration values."""
         # Note: In test environment, POSTGRES_DB is set to "inventory_test" in conftest
         # and POSTGRES_PORT may be set to 5433
+        # Clear DEBUG set by conftest to test default value
+        monkeypatch.delenv("DEBUG", raising=False)
         settings = Settings()
 
         assert settings.postgres_user == "postgres"

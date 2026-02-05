@@ -14,7 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from itemwise.config import Settings
 from itemwise.database.models import Base
 
-# Set test environment variables
+# Set test environment variables BEFORE importing auth module
+os.environ["DEBUG"] = "true"  # Allow default SECRET_KEY in tests
 os.environ["POSTGRES_DB"] = "inventory_test"
 os.environ["POSTGRES_PORT"] = os.environ.get("POSTGRES_PORT", "5433")  # Use 5433 for local testing
 
