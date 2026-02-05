@@ -4,12 +4,13 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Annotated, Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.exc import IntegrityError
 
@@ -24,6 +25,7 @@ from .database.crud import (
     delete_item,
     get_item,
     get_or_create_location,
+    get_user_by_email,
     list_items,
     list_locations,
     log_transaction,
@@ -33,7 +35,20 @@ from .database.crud import (
 )
 from .database.engine import AsyncSessionLocal, close_db, init_db
 from .embeddings import generate_embedding
-from .auth import hash_password, create_access_token, create_refresh_token, Token
+from .auth import (
+    AccessTokenResponse,
+    DUMMY_HASH,
+    RefreshTokenRequest,
+    Token,
+    TokenData,
+    create_access_token,
+    create_refresh_token,
+    decode_access_token,
+    decode_refresh_token,
+    hash_password,
+    validate_password,
+    verify_password,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -137,15 +152,47 @@ app.add_middleware(
 )
 
 
+# ===== Authentication =====
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+
+
+async def get_current_user(
+    token: Annotated[str | None, Depends(oauth2_scheme)]
+) -> TokenData:
+    """Dependency to get the current authenticated user from JWT token."""
+    if token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    token_data = decode_access_token(token)
+    if token_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    return token_data
+
+
 # ===== Auth Endpoints =====
 
 
-@app.post("/api/auth/register", response_model=Token)
+@app.post("/api/auth/register", response_model=Token, status_code=status.HTTP_201_CREATED)
 async def register(user_data: UserRegister):
     """Register a new user account.
 
     Returns access and refresh tokens on successful registration.
     """
+    # Validate password complexity
+    is_valid, error_msg = validate_password(user_data.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+    
     async with AsyncSessionLocal() as session:
         hashed_password = hash_password(user_data.password)
         try:
@@ -160,15 +207,69 @@ async def register(user_data: UserRegister):
         return Token(access_token=access_token, refresh_token=refresh_token)
 
 
+@app.post("/api/auth/login", response_model=Token)
+async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
+    """Login and get access/refresh tokens.
+
+    Uses constant-time comparison to prevent timing attacks.
+    """
+    async with AsyncSessionLocal() as session:
+        user = await get_user_by_email(session, form_data.username)
+        
+        # Use dummy hash if user doesn't exist to prevent timing attacks
+        password_hash = user.hashed_password if user else DUMMY_HASH
+        password_valid = verify_password(form_data.password, password_hash)
+        
+        if not user or not password_valid:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        access_token = create_access_token(user.id, user.email)
+        refresh_token = create_refresh_token(user.id, user.email)
+        
+        return Token(access_token=access_token, refresh_token=refresh_token)
+
+
+@app.post("/api/auth/refresh", response_model=AccessTokenResponse)
+async def refresh_token(request: RefreshTokenRequest):
+    """Get a new access token using a refresh token."""
+    token_data = decode_refresh_token(request.refresh_token)
+    if token_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    
+    access_token = create_access_token(token_data.user_id, token_data.email)
+    return AccessTokenResponse(access_token=access_token)
+
+
+@app.get("/api/auth/me")
+async def get_current_user_info(
+    current_user: Annotated[TokenData, Depends(get_current_user)]
+):
+    """Get current authenticated user info."""
+    return {
+        "user_id": current_user.user_id,
+        "email": current_user.email,
+    }
+
+
 # ===== Item Endpoints =====
 
 
 @app.get("/api/items")
 async def get_items(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
     category: Optional[str] = Query(None, description="Filter by category"),
     location: Optional[str] = Query(None, description="Filter by location name"),
 ):
     """List all inventory items with optional filters."""
+    # TODO: Add user_id filtering for multi-tenant isolation
     async with AsyncSessionLocal() as session:
         items = await list_items(
             session,
@@ -193,7 +294,10 @@ async def get_items(
 
 
 @app.post("/api/items")
-async def create_new_item(item: ItemCreate):
+async def create_new_item(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    item: ItemCreate,
+):
     """Add a new item to inventory."""
     async with AsyncSessionLocal() as session:
         # Get or create location if specified
@@ -246,7 +350,10 @@ async def create_new_item(item: ItemCreate):
 
 
 @app.get("/api/items/{item_id}")
-async def get_single_item(item_id: int):
+async def get_single_item(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    item_id: int,
+):
     """Get a single item by ID."""
     async with AsyncSessionLocal() as session:
         item = await get_item(session, item_id)
@@ -264,7 +371,11 @@ async def get_single_item(item_id: int):
 
 
 @app.put("/api/items/{item_id}")
-async def update_existing_item(item_id: int, item: ItemUpdate):
+async def update_existing_item(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    item_id: int,
+    item: ItemUpdate,
+):
     """Update an existing item."""
     async with AsyncSessionLocal() as session:
         existing = await get_item(session, item_id)
@@ -322,7 +433,10 @@ async def update_existing_item(item_id: int, item: ItemUpdate):
 
 
 @app.delete("/api/items/{item_id}")
-async def delete_existing_item(item_id: int):
+async def delete_existing_item(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    item_id: int,
+):
     """Delete an item from inventory."""
     async with AsyncSessionLocal() as session:
         item = await get_item(session, item_id)
@@ -354,6 +468,7 @@ async def delete_existing_item(item_id: int):
 
 @app.get("/api/search")
 async def search_items(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
     q: str = Query(..., description="Search query"),
     location: Optional[str] = Query(None, description="Filter by location"),
 ):
@@ -422,7 +537,9 @@ async def search_items(
 
 
 @app.get("/api/locations")
-async def get_all_locations():
+async def get_all_locations(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+):
     """List all storage locations."""
     async with AsyncSessionLocal() as session:
         locations = await list_locations(session)
@@ -440,7 +557,10 @@ async def get_all_locations():
 
 
 @app.post("/api/locations")
-async def create_new_location(location: LocationCreate):
+async def create_new_location(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    location: LocationCreate,
+):
     """Create a new storage location."""
     async with AsyncSessionLocal() as session:
         # Generate embedding
@@ -475,7 +595,10 @@ async def create_new_location(location: LocationCreate):
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(message: ChatMessage):
+async def chat(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    message: ChatMessage,
+):
     """Process a natural language message about inventory.
     
     Uses Azure OpenAI with tool calling if configured, otherwise
