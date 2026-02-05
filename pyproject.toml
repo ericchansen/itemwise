@@ -65,7 +65,6 @@ target-version = "py311"
 select = ["E", "F", "W"]
 ignore = [
     "E402",  # Module level import not at top (needed for load_dotenv pattern)
-    "F821",  # Undefined name (false positive for forward references)
     "W293",  # Blank line contains whitespace (common in docstrings)
 ]
 
