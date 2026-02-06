@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text
 
 # Load environment variables from .env file (find it relative to this file)
 _env_path = Path(__file__).parent.parent.parent / ".env"
@@ -142,14 +143,35 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS configuration from environment
+_cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:8080,http://127.0.0.1:8080")
+ALLOWED_ORIGINS = [origin.strip() for origin in _cors_origins.split(",") if origin.strip()]
+
+# Security check: don't allow wildcard with credentials in production
+_is_production = os.getenv("ENV", "development").lower() in ("production", "prod")
+if _is_production and "*" in ALLOWED_ORIGINS:
+    raise ValueError("CORS_ORIGINS cannot be '*' in production when credentials are enabled")
+
 # Add CORS middleware for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify actual origins
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint - verifies DB connectivity."""
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+        return {"status": "healthy", "service": "itemwise-api", "database": "connected"}
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return {"status": "unhealthy", "service": "itemwise-api", "database": "disconnected"}
 
 
 # ===== Authentication =====
@@ -269,10 +291,10 @@ async def get_items(
     location: Optional[str] = Query(None, description="Filter by location name"),
 ):
     """List all inventory items with optional filters."""
-    # TODO: Add user_id filtering for multi-tenant isolation
     async with AsyncSessionLocal() as session:
         items = await list_items(
             session,
+            user_id=current_user.user_id,
             category=category,
             location_name=location,
         )
@@ -304,7 +326,7 @@ async def create_new_item(
         location_id = None
         location_name = None
         if item.location:
-            loc = await get_or_create_location(session, item.location.strip())
+            loc = await get_or_create_location(session, current_user.user_id, item.location.strip())
             location_id = loc.id
             location_name = loc.name
 
@@ -327,6 +349,7 @@ async def create_new_item(
         # Create item
         new_item = await create_item(
             session,
+            user_id=current_user.user_id,
             name=item.name,
             quantity=item.quantity,
             category=item.category,
@@ -356,7 +379,7 @@ async def get_single_item(
 ):
     """Get a single item by ID."""
     async with AsyncSessionLocal() as session:
-        item = await get_item(session, item_id)
+        item = await get_item(session, current_user.user_id, item_id)
         if not item:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
         return {
@@ -378,7 +401,7 @@ async def update_existing_item(
 ):
     """Update an existing item."""
     async with AsyncSessionLocal() as session:
-        existing = await get_item(session, item_id)
+        existing = await get_item(session, current_user.user_id, item_id)
         if not existing:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
 
@@ -386,7 +409,7 @@ async def update_existing_item(
         location_id = None
         if item.location is not None:
             if item.location:
-                loc = await get_or_create_location(session, item.location.strip())
+                loc = await get_or_create_location(session, current_user.user_id, item.location.strip())
                 location_id = loc.id
 
         # Generate new embedding if needed
@@ -409,6 +432,7 @@ async def update_existing_item(
         # Update item
         updated = await update_item(
             session,
+            user_id=current_user.user_id,
             item_id=item_id,
             name=item.name,
             quantity=item.quantity,
@@ -439,7 +463,7 @@ async def delete_existing_item(
 ):
     """Delete an item from inventory."""
     async with AsyncSessionLocal() as session:
-        item = await get_item(session, item_id)
+        item = await get_item(session, current_user.user_id, item_id)
         if not item:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
 
@@ -453,7 +477,7 @@ async def delete_existing_item(
             data={"name": item_name},
         )
 
-        deleted = await delete_item(session, item_id)
+        deleted = await delete_item(session, current_user.user_id, item_id)
         if not deleted:
             raise HTTPException(status_code=500, detail="Failed to delete item")
 
@@ -486,12 +510,12 @@ async def search_items(
 
         # Semantic search
         semantic_results = await search_items_by_embedding(
-            session, query_embedding, location_name=location, limit=10
+            session, current_user.user_id, query_embedding, location_name=location, limit=10
         )
 
         # Text search fallback
         text_results = await search_items_by_text(
-            session, q, location_name=location, limit=10
+            session, current_user.user_id, q, location_name=location, limit=10
         )
 
         # Combine results
@@ -542,7 +566,7 @@ async def get_all_locations(
 ):
     """List all storage locations."""
     async with AsyncSessionLocal() as session:
-        locations = await list_locations(session)
+        locations = await list_locations(session, current_user.user_id)
         return {
             "count": len(locations),
             "locations": [
@@ -569,6 +593,7 @@ async def create_new_location(
 
         new_loc = await create_location(
             session,
+            user_id=current_user.user_id,
             name=location.name,
             description=location.description,
             embedding=embedding,
@@ -605,12 +630,12 @@ async def chat(
     falls back to simple pattern matching.
     """
     if AZURE_OPENAI_ENABLED:
-        return await _chat_with_ai(message.message)
+        return await _chat_with_ai(message.message, current_user.user_id)
     else:
-        return await _chat_fallback(message.message)
+        return await _chat_fallback(message.message, current_user.user_id)
 
 
-async def _chat_with_ai(user_message: str) -> ChatResponse:
+async def _chat_with_ai(user_message: str, user_id: int) -> ChatResponse:
     """Process chat using Azure OpenAI with tool calling."""
     from .ai_client import process_chat_with_tools, generate_display_name
 
@@ -632,7 +657,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
                 logger.warning(f"Failed to generate display name: {e}")
             
             # Get or create location
-            loc = await get_or_create_location(session, location.strip(), display_name=display_name)
+            loc = await get_or_create_location(session, user_id, location.strip(), display_name=display_name)
             
             # Generate embedding
             item_text = _get_item_text_for_embedding(name, description, category)
@@ -648,6 +673,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
             # Create item
             new_item = await create_item(
                 session,
+                user_id=user_id,
                 name=name,
                 quantity=quantity,
                 category=category,
@@ -669,7 +695,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
 
     async def handle_remove_item(item_id: int, quantity: int | None = None) -> dict:
         async with AsyncSessionLocal() as session:
-            item = await get_item(session, item_id)
+            item = await get_item(session, user_id, item_id)
             if not item:
                 return {"success": False, "error": f"Item {item_id} not found"}
             
@@ -679,19 +705,19 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
             if quantity is None or quantity >= current_qty:
                 # Remove completely
                 await log_transaction(session, operation="DELETE", item_id=item_id, data={"name": item_name})
-                await delete_item(session, item_id)
+                await delete_item(session, user_id, item_id)
                 return {"success": True, "message": f"Removed all {current_qty} {item_name}"}
             else:
                 # Reduce quantity
                 new_qty = current_qty - quantity
                 await log_transaction(session, operation="UPDATE", item_id=item_id, data={"quantity_removed": quantity})
-                await update_item(session, item_id, quantity=new_qty)
+                await update_item(session, user_id, item_id, quantity=new_qty)
                 return {"success": True, "message": f"Removed {quantity} {item_name}, {new_qty} remaining"}
 
     async def handle_search_items(query: str, location: str | None = None) -> dict:
         async with AsyncSessionLocal() as session:
             query_embedding = generate_embedding(query)
-            results = await search_items_by_embedding(session, query_embedding, location_name=location, limit=10)
+            results = await search_items_by_embedding(session, user_id, query_embedding, location_name=location, limit=10)
             
             if not results:
                 return {"success": True, "count": 0, "items": []}
@@ -713,7 +739,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
 
     async def handle_list_items(location: str | None = None, category: str | None = None) -> dict:
         async with AsyncSessionLocal() as session:
-            items = await list_items(session, location_name=location, category=category)
+            items = await list_items(session, user_id, location_name=location, category=category)
             return {
                 "success": True,
                 "count": len(items),
@@ -731,7 +757,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
 
     async def handle_list_locations() -> dict:
         async with AsyncSessionLocal() as session:
-            locations = await list_locations(session)
+            locations = await list_locations(session, user_id)
             return {
                 "success": True,
                 "count": len(locations),
@@ -758,7 +784,7 @@ async def _chat_with_ai(user_message: str) -> ChatResponse:
         )
 
 
-async def _chat_fallback(user_message: str) -> ChatResponse:
+async def _chat_fallback(user_message: str, user_id: int) -> ChatResponse:
     """Simple pattern-matching fallback when Azure OpenAI is not configured."""
     text = user_message.lower().strip()
     
@@ -772,7 +798,7 @@ async def _chat_fallback(user_message: str) -> ChatResponse:
                     location = loc_word.title()
                     break
             
-            items = await list_items(session, location_name=location)
+            items = await list_items(session, user_id, location_name=location)
             
             if not items:
                 return ChatResponse(
@@ -804,7 +830,7 @@ async def _chat_fallback(user_message: str) -> ChatResponse:
                 return ChatResponse(response="What would you like to search for?")
             
             query_embedding = generate_embedding(search_terms)
-            raw_results = await search_items_by_embedding(session, query_embedding, limit=5)
+            raw_results = await search_items_by_embedding(session, user_id, query_embedding, limit=5)
             
             # Filter by similarity threshold (distance < 1.0 means reasonably similar)
             results = [(item, dist) for item, dist in raw_results if dist < 1.0]

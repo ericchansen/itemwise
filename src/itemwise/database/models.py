@@ -42,7 +42,7 @@ class Location(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False, index=True)  # Display name (e.g., "Tim's Pocket")
     normalized_name: Mapped[str] = mapped_column(String, nullable=False, index=True)  # For matching (e.g., "tims pocket")
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -53,11 +53,13 @@ class Location(Base):
         DateTime(timezone=True), server_default=func.now()
     )
 
-    # Relationship to items
+    # Relationships
     if TYPE_CHECKING:
         items: Mapped[list["InventoryItem"]]
+        user: Mapped["User"]
     else:
         items = relationship("InventoryItem", back_populates="location")
+        user = relationship("User", backref="locations")
 
     def __repr__(self) -> str:
         return f"<Location(id={self.id}, name='{self.name}')>"
@@ -76,6 +78,7 @@ class InventoryItem(Base):
     location_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("locations.id"), nullable=True, index=True
     )
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     embedding: Mapped[Optional[list[float]]] = mapped_column(
         Vector(EMBEDDING_DIMENSION), nullable=True
     )
