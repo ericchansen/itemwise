@@ -201,6 +201,8 @@ def decode_access_token(token: str) -> Optional[TokenData]:
     """
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "access":
+            return None
         user_id = int(payload.get("sub", 0))
         email = payload.get("email", "")
 

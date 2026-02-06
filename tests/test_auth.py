@@ -2,7 +2,13 @@
 
 import pytest
 
-from itemwise.auth import SecretKeyError, _get_secret_key
+from itemwise.auth import (
+    SecretKeyError,
+    _get_secret_key,
+    create_access_token,
+    create_refresh_token,
+    decode_access_token,
+)
 
 
 class TestGetSecretKey:
@@ -82,3 +88,26 @@ class TestGetSecretKey:
         monkeypatch.setenv("DEBUG", "false")
         monkeypatch.setenv("ENV", "development")
         assert _get_secret_key() == "jwt-specific-key"
+
+
+class TestDecodeAccessToken:
+    """Tests for decode_access_token token type validation."""
+
+    def test_accepts_valid_access_token(self) -> None:
+        """A properly created access token is decoded successfully."""
+        token = create_access_token(user_id=42, email="test@example.com")
+        result = decode_access_token(token)
+        assert result is not None
+        assert result.user_id == 42
+        assert result.email == "test@example.com"
+
+    def test_rejects_refresh_token_as_access_token(self) -> None:
+        """A refresh token must not be accepted as an access token."""
+        token = create_refresh_token(user_id=42, email="test@example.com")
+        result = decode_access_token(token)
+        assert result is None
+
+    def test_rejects_invalid_token(self) -> None:
+        """An invalid token string returns None."""
+        result = decode_access_token("not-a-valid-token")
+        assert result is None
