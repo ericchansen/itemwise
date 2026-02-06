@@ -50,9 +50,9 @@ ENV TRANSFORMERS_OFFLINE=1
 # Expose port
 EXPOSE 8080
 
-# Health check
+# Health check - uses unauthenticated /health endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD python -c "import httpx; httpx.get('http://localhost:8080/api/items', timeout=5)" || exit 1
+    CMD python -c "import httpx; r=httpx.get('http://localhost:8080/health', timeout=5); exit(0 if r.json().get('status')=='healthy' else 1)"
 
 # Run the application
 CMD ["python", "-m", "uvicorn", "itemwise.api:app", "--host", "0.0.0.0", "--port", "8080"]

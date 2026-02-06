@@ -8,6 +8,8 @@ from fastmcp.exceptions import ToolError
 from pytest_mock import MockerFixture
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from itemwise.database.models import User
+
 # Import the MCP server to get tool functions
 from itemwise.server import add_item as add_item_tool
 from itemwise.server import list_inventory as list_tool
@@ -28,11 +30,13 @@ class TestAddItem:
 
     @pytest.mark.asyncio
     async def test_add_item_success(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test successfully adding an item."""
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
             result = await add_item(
@@ -49,11 +53,13 @@ class TestAddItem:
 
     @pytest.mark.asyncio
     async def test_add_item_without_description(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test adding an item without description."""
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
             result = await add_item(
@@ -67,11 +73,13 @@ class TestAddItem:
 
     @pytest.mark.asyncio
     async def test_add_item_logs_transaction(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test that adding an item logs a transaction."""
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
             await add_item(
@@ -122,17 +130,19 @@ class TestUpdateItemTool:
 
     @pytest.mark.asyncio
     async def test_update_item_success(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test successfully updating an item."""
         from itemwise.database.crud import create_item
 
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
             # Create an item first
-            item = await create_item(db_session, "Original", 5, "test")
+            item = await create_item(db_session, test_user.id, "Original", 5, "test")
 
             result = await update_item_tool(
                 item_id=item.id,
@@ -146,11 +156,13 @@ class TestUpdateItemTool:
 
     @pytest.mark.asyncio
     async def test_update_item_not_found(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test updating a non-existent item."""
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
             with pytest.raises(ToolError) as exc_info:
@@ -163,16 +175,18 @@ class TestUpdateItemTool:
 
     @pytest.mark.asyncio
     async def test_update_item_partial(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test updating only some fields."""
         from itemwise.database.crud import create_item
 
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
-            item = await create_item(db_session, "Original", 5, "test")
+            item = await create_item(db_session, test_user.id, "Original", 5, "test")
 
             result = await update_item_tool(
                 item_id=item.id,
@@ -188,16 +202,18 @@ class TestRemoveItem:
 
     @pytest.mark.asyncio
     async def test_remove_item_success(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test successfully removing an item."""
         from itemwise.database.crud import create_item
 
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
-            item = await create_item(db_session, "To Delete", 1, "test")
+            item = await create_item(db_session, test_user.id, "To Delete", 1, "test")
 
             result = await remove_item(item_id=item.id)
 
@@ -206,11 +222,13 @@ class TestRemoveItem:
 
     @pytest.mark.asyncio
     async def test_remove_item_not_found(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test removing a non-existent item."""
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
             with pytest.raises(ToolError) as exc_info:
@@ -220,16 +238,18 @@ class TestRemoveItem:
 
     @pytest.mark.asyncio
     async def test_remove_item_logs_transaction(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test that removing an item logs a transaction."""
         from itemwise.database.crud import create_item, get_transaction_logs
 
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
-            item = await create_item(db_session, "To Delete", 1, "test")
+            item = await create_item(db_session, test_user.id, "To Delete", 1, "test")
             await remove_item(item_id=item.id)
 
             logs = await get_transaction_logs(db_session)
@@ -243,17 +263,19 @@ class TestListInventory:
 
     @pytest.mark.asyncio
     async def test_list_all_items(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test listing all inventory items."""
         from itemwise.database.crud import create_item
 
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
-            await create_item(db_session, "Item 1", 1, "meat")
-            await create_item(db_session, "Item 2", 2, "vegetables")
+            await create_item(db_session, test_user.id, "Item 1", 1, "meat")
+            await create_item(db_session, test_user.id, "Item 2", 2, "vegetables")
 
             result = await list_inventory()
 
@@ -264,17 +286,19 @@ class TestListInventory:
 
     @pytest.mark.asyncio
     async def test_list_items_by_category(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test listing items filtered by category."""
         from itemwise.database.crud import create_item
 
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
-            await create_item(db_session, "Chicken", 1, "meat")
-            await create_item(db_session, "Peas", 2, "vegetables")
+            await create_item(db_session, test_user.id, "Chicken", 1, "meat")
+            await create_item(db_session, test_user.id, "Peas", 2, "vegetables")
 
             result = await list_inventory(category="meat")
 
@@ -285,11 +309,13 @@ class TestListInventory:
 
     @pytest.mark.asyncio
     async def test_list_empty_inventory(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test listing when inventory is empty."""
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
             result = await list_inventory()
@@ -304,17 +330,19 @@ class TestSearchInventory:
 
     @pytest.mark.asyncio
     async def test_search_inventory_success(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test searching inventory."""
         from itemwise.database.crud import create_item
 
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
-            await create_item(db_session, "Chicken Breast", 1, "meat")
-            await create_item(db_session, "Frozen Peas", 2, "vegetables")
+            await create_item(db_session, test_user.id, "Chicken Breast", 1, "meat")
+            await create_item(db_session, test_user.id, "Frozen Peas", 2, "vegetables")
 
             result = await search_inventory(query="chicken")
 
@@ -325,13 +353,15 @@ class TestSearchInventory:
 
     @pytest.mark.asyncio
     async def test_search_inventory_logs_transaction(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test that search logs a transaction."""
         from itemwise.database.crud import get_transaction_logs
 
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
             await search_inventory(query="test")
@@ -343,11 +373,13 @@ class TestSearchInventory:
 
     @pytest.mark.asyncio
     async def test_search_inventory_no_results(
-        self, db_session: AsyncSession, mock_session_factory: Any
+        self, db_session: AsyncSession, mock_session_factory: Any, test_user: User
     ) -> None:
         """Test searching with no matching results."""
         with patch(
             "itemwise.server.AsyncSessionLocal", mock_session_factory
+        ), patch(
+            "itemwise.server._get_default_user_id", return_value=test_user.id
         ):
 
             result = await search_inventory(query="nonexistent")

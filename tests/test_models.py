@@ -5,20 +5,21 @@ from datetime import datetime
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from itemwise.database.models import InventoryItem, TransactionLog
+from itemwise.database.models import InventoryItem, TransactionLog, User
 
 
 class TestInventoryItem:
     """Tests for InventoryItem model."""
 
     @pytest.mark.asyncio
-    async def test_create_inventory_item(self, db_session: AsyncSession) -> None:
+    async def test_create_inventory_item(self, db_session: AsyncSession, test_user: User) -> None:
         """Test creating an inventory item."""
         item = InventoryItem(
             name="Chicken Breast",
             quantity=5,
             category="meat",
             description="Organic chicken",
+            user_id=test_user.id,
         )
 
         db_session.add(item)
@@ -30,12 +31,13 @@ class TestInventoryItem:
         assert item.quantity == 5
         assert item.category == "meat"
         assert item.description == "Organic chicken"
+        assert item.user_id == test_user.id
         assert item.created_at is not None
         assert isinstance(item.created_at, datetime)
 
     @pytest.mark.asyncio
     async def test_inventory_item_with_embedding(
-        self, db_session: AsyncSession
+        self, db_session: AsyncSession, test_user: User
     ) -> None:
         """Test creating an item with vector embedding."""
         embedding = [0.1] * 384  # 384-dimensional vector (all-MiniLM-L6-v2)
@@ -45,6 +47,7 @@ class TestInventoryItem:
             quantity=1,
             category="test",
             embedding=embedding,
+            user_id=test_user.id,
         )
 
         db_session.add(item)
@@ -56,13 +59,14 @@ class TestInventoryItem:
 
     @pytest.mark.asyncio
     async def test_inventory_item_optional_fields(
-        self, db_session: AsyncSession
+        self, db_session: AsyncSession, test_user: User
     ) -> None:
         """Test creating an item with only required fields."""
         item = InventoryItem(
             name="Minimal Item",
             quantity=1,
             category="test",
+            user_id=test_user.id,
         )
 
         db_session.add(item)
@@ -80,6 +84,7 @@ class TestInventoryItem:
             name="Test Item",
             quantity=5,
             category="test",
+            user_id=1,
         )
 
         repr_str = repr(item)
