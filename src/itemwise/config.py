@@ -29,10 +29,14 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         """Construct the database URL for async PostgreSQL connection."""
-        return (
+        base_url = (
             f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
+        # Add SSL for Azure PostgreSQL
+        if "azure" in self.postgres_host.lower() or "postgres.database" in self.postgres_host.lower():
+            return f"{base_url}?ssl=require"
+        return base_url
 
 
 # Global settings instance
