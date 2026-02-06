@@ -3,6 +3,7 @@
 import logging
 from typing import AsyncGenerator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -41,6 +42,8 @@ async def init_db() -> None:
     """
     logger.info("Initializing database tables...")
     async with engine.begin() as conn:
+        # Create pgvector extension if not exists (required for embeddings)
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables initialized successfully")
 
