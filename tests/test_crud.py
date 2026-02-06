@@ -17,7 +17,7 @@ from itemwise.database.crud import (
     search_items_by_text,
     update_item,
 )
-from itemwise.database.models import InventoryItem
+from itemwise.database.models import InventoryItem, User
 
 
 class TestCreateItem:
@@ -25,24 +25,26 @@ class TestCreateItem:
 
     @pytest.mark.asyncio
     async def test_create_basic_item(
-        self, db_session: AsyncSession, sample_item_data: dict[str, Any]
+        self, db_session: AsyncSession, test_user: User, sample_item_data: dict[str, Any]
     ) -> None:
         """Test creating a basic inventory item."""
-        item = await create_item(db_session, **sample_item_data)
+        item = await create_item(db_session, user_id=test_user.id, **sample_item_data)
 
         assert item.id is not None
         assert item.name == sample_item_data["name"]
         assert item.quantity == sample_item_data["quantity"]
         assert item.category == sample_item_data["category"]
         assert item.description == sample_item_data["description"]
+        assert item.user_id == test_user.id
 
     @pytest.mark.asyncio
-    async def test_create_item_with_embedding(self, db_session: AsyncSession) -> None:
+    async def test_create_item_with_embedding(self, db_session: AsyncSession, test_user: User) -> None:
         """Test creating an item with vector embedding."""
         embedding = [0.5] * 384  # 384-dimensional (all-MiniLM-L6-v2)
 
         item = await create_item(
             db_session,
+            user_id=test_user.id,
             name="Test Item",
             quantity=1,
             category="test",
@@ -53,10 +55,11 @@ class TestCreateItem:
         assert len(item.embedding) == 384
 
     @pytest.mark.asyncio
-    async def test_create_item_minimal(self, db_session: AsyncSession) -> None:
+    async def test_create_item_minimal(self, db_session: AsyncSession, test_user: User) -> None:
         """Test creating an item with only required fields."""
         item = await create_item(
             db_session,
+            user_id=test_user.id,
             name="Minimal",
             quantity=1,
             category="test",
@@ -71,21 +74,21 @@ class TestGetItem:
 
     @pytest.mark.asyncio
     async def test_get_existing_item(
-        self, db_session: AsyncSession, sample_item_data: dict[str, Any]
+        self, db_session: AsyncSession, test_user: User, sample_item_data: dict[str, Any]
     ) -> None:
         """Test retrieving an existing item."""
-        created_item = await create_item(db_session, **sample_item_data)
+        created_item = await create_item(db_session, user_id=test_user.id, **sample_item_data)
 
-        retrieved_item = await get_item(db_session, created_item.id)
+        retrieved_item = await get_item(db_session, test_user.id, created_item.id)
 
         assert retrieved_item is not None
         assert retrieved_item.id == created_item.id
         assert retrieved_item.name == created_item.name
 
     @pytest.mark.asyncio
-    async def test_get_nonexistent_item(self, db_session: AsyncSession) -> None:
+    async def test_get_nonexistent_item(self, db_session: AsyncSession, test_user: User) -> None:
         """Test retrieving a non-existent item."""
-        item = await get_item(db_session, 99999)
+        item = await get_item(db_session, test_user.id, 99999)
         assert item is None
 
 
@@ -93,42 +96,42 @@ class TestListItems:
     """Tests for list_items function."""
 
     @pytest.mark.asyncio
-    async def test_list_all_items(self, db_session: AsyncSession) -> None:
+    async def test_list_all_items(self, db_session: AsyncSession, test_user: User) -> None:
         """Test listing all items."""
-        await create_item(db_session, "Item 1", 1, "meat")
-        await create_item(db_session, "Item 2", 2, "vegetables")
-        await create_item(db_session, "Item 3", 3, "meat")
+        await create_item(db_session, test_user.id, "Item 1", 1, "meat")
+        await create_item(db_session, test_user.id, "Item 2", 2, "vegetables")
+        await create_item(db_session, test_user.id, "Item 3", 3, "meat")
 
-        items = await list_items(db_session)
+        items = await list_items(db_session, test_user.id)
 
         assert len(items) == 3
 
     @pytest.mark.asyncio
-    async def test_list_items_by_category(self, db_session: AsyncSession) -> None:
+    async def test_list_items_by_category(self, db_session: AsyncSession, test_user: User) -> None:
         """Test listing items filtered by category."""
-        await create_item(db_session, "Chicken", 1, "meat")
-        await create_item(db_session, "Peas", 2, "vegetables")
-        await create_item(db_session, "Beef", 3, "meat")
+        await create_item(db_session, test_user.id, "Chicken", 1, "meat")
+        await create_item(db_session, test_user.id, "Peas", 2, "vegetables")
+        await create_item(db_session, test_user.id, "Beef", 3, "meat")
 
-        meat_items = await list_items(db_session, category="meat")
+        meat_items = await list_items(db_session, test_user.id, category="meat")
 
         assert len(meat_items) == 2
         assert all(item.category == "meat" for item in meat_items)
 
     @pytest.mark.asyncio
-    async def test_list_items_with_limit(self, db_session: AsyncSession) -> None:
+    async def test_list_items_with_limit(self, db_session: AsyncSession, test_user: User) -> None:
         """Test listing items with a limit."""
         for i in range(5):
-            await create_item(db_session, f"Item {i}", i, "test")
+            await create_item(db_session, test_user.id, f"Item {i}", i, "test")
 
-        items = await list_items(db_session, limit=3)
+        items = await list_items(db_session, test_user.id, limit=3)
 
         assert len(items) == 3
 
     @pytest.mark.asyncio
-    async def test_list_items_empty(self, db_session: AsyncSession) -> None:
+    async def test_list_items_empty(self, db_session: AsyncSession, test_user: User) -> None:
         """Test listing items when database is empty."""
-        items = await list_items(db_session)
+        items = await list_items(db_session, test_user.id)
         assert items == []
 
 
@@ -137,36 +140,37 @@ class TestUpdateItem:
 
     @pytest.mark.asyncio
     async def test_update_item_name(
-        self, db_session: AsyncSession, sample_item_data: dict[str, Any]
+        self, db_session: AsyncSession, test_user: User, sample_item_data: dict[str, Any]
     ) -> None:
         """Test updating an item's name."""
-        item = await create_item(db_session, **sample_item_data)
+        item = await create_item(db_session, user_id=test_user.id, **sample_item_data)
 
-        updated = await update_item(db_session, item.id, name="New Name")
+        updated = await update_item(db_session, test_user.id, item.id, name="New Name")
 
         assert updated.name == "New Name"
         assert updated.quantity == sample_item_data["quantity"]
 
     @pytest.mark.asyncio
     async def test_update_item_quantity(
-        self, db_session: AsyncSession, sample_item_data: dict[str, Any]
+        self, db_session: AsyncSession, test_user: User, sample_item_data: dict[str, Any]
     ) -> None:
         """Test updating an item's quantity."""
-        item = await create_item(db_session, **sample_item_data)
+        item = await create_item(db_session, user_id=test_user.id, **sample_item_data)
 
-        updated = await update_item(db_session, item.id, quantity=10)
+        updated = await update_item(db_session, test_user.id, item.id, quantity=10)
 
         assert updated.quantity == 10
 
     @pytest.mark.asyncio
     async def test_update_multiple_fields(
-        self, db_session: AsyncSession, sample_item_data: dict[str, Any]
+        self, db_session: AsyncSession, test_user: User, sample_item_data: dict[str, Any]
     ) -> None:
         """Test updating multiple fields at once."""
-        item = await create_item(db_session, **sample_item_data)
+        item = await create_item(db_session, user_id=test_user.id, **sample_item_data)
 
         updated = await update_item(
             db_session,
+            test_user.id,
             item.id,
             name="Updated",
             quantity=20,
@@ -180,21 +184,21 @@ class TestUpdateItem:
         assert updated.description == "New description"
 
     @pytest.mark.asyncio
-    async def test_update_nonexistent_item(self, db_session: AsyncSession) -> None:
+    async def test_update_nonexistent_item(self, db_session: AsyncSession, test_user: User) -> None:
         """Test updating a non-existent item."""
-        result = await update_item(db_session, 99999, name="Test")
+        result = await update_item(db_session, test_user.id, 99999, name="Test")
         assert result is None
 
     @pytest.mark.asyncio
     async def test_update_item_embedding(
-        self, db_session: AsyncSession, sample_item_data: dict[str, Any]
+        self, db_session: AsyncSession, test_user: User, sample_item_data: dict[str, Any]
     ) -> None:
         """Test updating an item's embedding."""
-        item = await create_item(db_session, **sample_item_data)
+        item = await create_item(db_session, user_id=test_user.id, **sample_item_data)
 
         # Use correct dimension size (384 for all-MiniLM-L6-v2)
         new_embedding = [0.1] * 384
-        updated = await update_item(db_session, item.id, embedding=new_embedding)
+        updated = await update_item(db_session, test_user.id, item.id, embedding=new_embedding)
 
         # Compare list elements instead of using == on arrays
         assert len(updated.embedding) == len(new_embedding)
@@ -206,23 +210,23 @@ class TestDeleteItem:
 
     @pytest.mark.asyncio
     async def test_delete_existing_item(
-        self, db_session: AsyncSession, sample_item_data: dict[str, Any]
+        self, db_session: AsyncSession, test_user: User, sample_item_data: dict[str, Any]
     ) -> None:
         """Test deleting an existing item."""
-        item = await create_item(db_session, **sample_item_data)
+        item = await create_item(db_session, user_id=test_user.id, **sample_item_data)
 
-        deleted = await delete_item(db_session, item.id)
+        deleted = await delete_item(db_session, test_user.id, item.id)
 
         assert deleted is True
 
         # Verify item is gone
-        result = await get_item(db_session, item.id)
+        result = await get_item(db_session, test_user.id, item.id)
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_delete_nonexistent_item(self, db_session: AsyncSession) -> None:
+    async def test_delete_nonexistent_item(self, db_session: AsyncSession, test_user: User) -> None:
         """Test deleting a non-existent item."""
-        deleted = await delete_item(db_session, 99999)
+        deleted = await delete_item(db_session, test_user.id, 99999)
         assert deleted is False
 
 
@@ -230,58 +234,58 @@ class TestSearchItems:
     """Tests for search functions."""
 
     @pytest.mark.asyncio
-    async def test_search_by_text_exact_match(self, db_session: AsyncSession) -> None:
+    async def test_search_by_text_exact_match(self, db_session: AsyncSession, test_user: User) -> None:
         """Test text search with exact match."""
-        await create_item(db_session, "Chicken Breast", 1, "meat")
-        await create_item(db_session, "Frozen Peas", 2, "vegetables")
+        await create_item(db_session, test_user.id, "Chicken Breast", 1, "meat")
+        await create_item(db_session, test_user.id, "Frozen Peas", 2, "vegetables")
 
-        results = await search_items_by_text(db_session, "Chicken")
+        results = await search_items_by_text(db_session, test_user.id, "Chicken")
 
         assert len(results) == 1
         assert results[0].name == "Chicken Breast"
 
     @pytest.mark.asyncio
     async def test_search_by_text_case_insensitive(
-        self, db_session: AsyncSession
+        self, db_session: AsyncSession, test_user: User
     ) -> None:
         """Test that text search is case-insensitive."""
-        await create_item(db_session, "Chicken Breast", 1, "meat")
+        await create_item(db_session, test_user.id, "Chicken Breast", 1, "meat")
 
-        results = await search_items_by_text(db_session, "chicken")
+        results = await search_items_by_text(db_session, test_user.id, "chicken")
 
         assert len(results) == 1
 
     @pytest.mark.asyncio
-    async def test_search_by_text_partial_match(self, db_session: AsyncSession) -> None:
+    async def test_search_by_text_partial_match(self, db_session: AsyncSession, test_user: User) -> None:
         """Test text search with partial match."""
-        await create_item(db_session, "Chicken Breast", 1, "meat")
-        await create_item(db_session, "Chicken Thigh", 2, "meat")
+        await create_item(db_session, test_user.id, "Chicken Breast", 1, "meat")
+        await create_item(db_session, test_user.id, "Chicken Thigh", 2, "meat")
 
-        results = await search_items_by_text(db_session, "chick")
+        results = await search_items_by_text(db_session, test_user.id, "chick")
 
         assert len(results) == 2
 
     @pytest.mark.asyncio
-    async def test_search_by_text_with_limit(self, db_session: AsyncSession) -> None:
+    async def test_search_by_text_with_limit(self, db_session: AsyncSession, test_user: User) -> None:
         """Test text search with result limit."""
         for i in range(5):
-            await create_item(db_session, f"Chicken {i}", 1, "meat")
+            await create_item(db_session, test_user.id, f"Chicken {i}", 1, "meat")
 
-        results = await search_items_by_text(db_session, "Chicken", limit=3)
+        results = await search_items_by_text(db_session, test_user.id, "Chicken", limit=3)
 
         assert len(results) == 3
 
     @pytest.mark.asyncio
-    async def test_search_by_embedding(self, db_session: AsyncSession) -> None:
+    async def test_search_by_embedding(self, db_session: AsyncSession, test_user: User) -> None:
         """Test vector similarity search."""
         embedding1 = [1.0] * 384  # 384-dimensional (all-MiniLM-L6-v2)
         embedding2 = [0.5] * 384
 
-        await create_item(db_session, "Item 1", 1, "test", embedding=embedding1)
-        await create_item(db_session, "Item 2", 2, "test", embedding=embedding2)
+        await create_item(db_session, test_user.id, "Item 1", 1, "test", embedding=embedding1)
+        await create_item(db_session, test_user.id, "Item 2", 2, "test", embedding=embedding2)
 
         query_embedding = [0.9] * 384
-        results = await search_items_by_embedding(db_session, query_embedding)
+        results = await search_items_by_embedding(db_session, test_user.id, query_embedding)
 
         assert len(results) == 2
         # Results should be tuples of (item, distance)
