@@ -60,11 +60,4 @@ htmlcov/
 # Coverage
 coverage.xml
 
-# Beads temp files
-.beads/*.db-*
-.beads/bd.sock
-.beads/daemon.*
-.beads/.local_version
-.beads/last-touched
-.beads/metadata.json
-.beads/*.left.*
+
