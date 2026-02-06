@@ -31,6 +31,7 @@ COPY --from=builder /app/.venv /app/.venv
 COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
+COPY frontend/ ./frontend/
 
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH"
