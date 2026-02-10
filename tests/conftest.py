@@ -12,8 +12,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from itemwise.config import Settings
-from itemwise.database.crud import create_user
-from itemwise.database.models import Base, User
+from itemwise.database.crud import create_inventory, create_user
+from itemwise.database.models import Base, Inventory, User
 
 # Set test environment variables BEFORE importing auth module
 os.environ["DEBUG"] = "true"  # Allow default SECRET_KEY in tests
@@ -105,6 +105,12 @@ async def test_user(db_session: AsyncSession) -> User:
     # Use explicit password hash for speed
     hashed = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.F3z3z3z3z3z3z3"
     return await create_user(db_session, "test@example.com", hashed)
+
+
+@pytest_asyncio.fixture
+async def test_inventory(db_session: AsyncSession, test_user: User) -> Inventory:
+    """Create a test inventory with the test user as owner."""
+    return await create_inventory(db_session, "Test Inventory", test_user.id)
 
 
 @pytest.fixture

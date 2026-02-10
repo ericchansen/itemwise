@@ -5,11 +5,11 @@ import logging
 import re
 from typing import Any, Optional
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from .models import InventoryItem, Location, TransactionLog, User
+from .models import Inventory, InventoryItem, InventoryMember, ItemLot, Location, TransactionLog, User  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -37,12 +37,218 @@ def normalize_location_name(name: str) -> str:
     return normalized.strip()
 
 
+# ===== Inventory & Sharing Operations =====
+
+
+async def create_inventory(session: AsyncSession, name: str, owner_user_id: int) -> Inventory:
+    """Create a new inventory and add the owner as a member.
+
+    Args:
+        session: Database session
+        name: Name of the inventory
+        owner_user_id: ID of the user who owns this inventory
+
+    Returns:
+        The created inventory
+    """
+    inventory = Inventory(name=name)
+    session.add(inventory)
+    await session.flush()
+
+    member = InventoryMember(inventory_id=inventory.id, user_id=owner_user_id)
+    session.add(member)
+    await session.commit()
+    await session.refresh(inventory)
+    logger.info(f"Created inventory: {inventory.name} (id={inventory.id}, owner={owner_user_id})")
+    return inventory
+
+
+async def list_inventories(session: AsyncSession, user_id: int) -> list[Inventory]:
+    """List all inventories the user is a member of.
+
+    Args:
+        session: Database session
+        user_id: ID of the user
+
+    Returns:
+        List of inventories the user belongs to, ordered by name
+    """
+    result = await session.execute(
+        select(Inventory)
+        .join(InventoryMember, Inventory.id == InventoryMember.inventory_id)
+        .where(InventoryMember.user_id == user_id)
+        .options(selectinload(Inventory.members))
+        .order_by(Inventory.name)
+    )
+    return list(result.scalars().all())
+
+
+async def get_inventory(session: AsyncSession, inventory_id: int) -> Optional[Inventory]:
+    """Get an inventory by ID with members eager-loaded.
+
+    Args:
+        session: Database session
+        inventory_id: ID of the inventory
+
+    Returns:
+        The inventory if found, None otherwise
+    """
+    result = await session.execute(
+        select(Inventory)
+        .where(Inventory.id == inventory_id)
+        .options(selectinload(Inventory.members))
+    )
+    return result.scalar_one_or_none()
+
+
+async def is_inventory_member(session: AsyncSession, inventory_id: int, user_id: int) -> bool:
+    """Check if a user is a member of an inventory.
+
+    Args:
+        session: Database session
+        inventory_id: ID of the inventory
+        user_id: ID of the user
+
+    Returns:
+        True if the user is a member, False otherwise
+    """
+    result = await session.execute(
+        select(InventoryMember).where(
+            InventoryMember.inventory_id == inventory_id,
+            InventoryMember.user_id == user_id,
+        )
+    )
+    return result.scalar_one_or_none() is not None
+
+
+async def add_inventory_member(session: AsyncSession, inventory_id: int, user_id: int) -> InventoryMember:
+    """Add a user to an inventory.
+
+    Args:
+        session: Database session
+        inventory_id: ID of the inventory
+        user_id: ID of the user to add
+
+    Returns:
+        The created InventoryMember
+    """
+    member = InventoryMember(inventory_id=inventory_id, user_id=user_id)
+    session.add(member)
+    await session.commit()
+    await session.refresh(member)
+    logger.info(f"Added member user_id={user_id} to inventory_id={inventory_id}")
+    return member
+
+
+async def remove_inventory_member(session: AsyncSession, inventory_id: int, user_id: int) -> bool:
+    """Remove a member from an inventory.
+
+    Args:
+        session: Database session
+        inventory_id: ID of the inventory
+        user_id: ID of the user to remove
+
+    Returns:
+        True if member was removed, False if not found
+    """
+    result = await session.execute(
+        delete(InventoryMember).where(
+            InventoryMember.inventory_id == inventory_id,
+            InventoryMember.user_id == user_id,
+        )
+    )
+    await session.commit()
+    removed: bool = result.rowcount > 0  # type: ignore[attr-defined]
+    if removed:
+        logger.info(f"Removed member user_id={user_id} from inventory_id={inventory_id}")
+    return removed
+
+
+async def list_inventory_members(session: AsyncSession, inventory_id: int) -> list[InventoryMember]:
+    """List all members of an inventory.
+
+    Args:
+        session: Database session
+        inventory_id: ID of the inventory
+
+    Returns:
+        List of InventoryMember entries with user info eager-loaded
+    """
+    result = await session.execute(
+        select(InventoryMember)
+        .where(InventoryMember.inventory_id == inventory_id)
+        .options(selectinload(InventoryMember.user))
+    )
+    return list(result.scalars().all())
+
+
+async def get_user_default_inventory(session: AsyncSession, user_id: int) -> Optional[Inventory]:
+    """Get the user's default inventory (first by ID, ascending).
+
+    If the user has no inventories, creates one named "{email}'s Inventory".
+
+    Args:
+        session: Database session
+        user_id: ID of the user
+
+    Returns:
+        The user's default inventory
+    """
+    result = await session.execute(
+        select(Inventory)
+        .join(InventoryMember, Inventory.id == InventoryMember.inventory_id)
+        .where(InventoryMember.user_id == user_id)
+        .order_by(Inventory.id.asc())
+        .limit(1)
+    )
+    inventory = result.scalar_one_or_none()
+    if inventory:
+        return inventory
+
+    # No inventory exists — create one using the user's email
+    user_result = await session.execute(select(User).where(User.id == user_id))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        return None
+
+    return await create_inventory(session, f"{user.email}'s Inventory", user_id)
+
+
+async def add_member_by_email(session: AsyncSession, inventory_id: int, email: str) -> Optional[InventoryMember]:
+    """Add a user to an inventory by email address.
+
+    Args:
+        session: Database session
+        inventory_id: ID of the inventory
+        email: Email address of the user to add
+
+    Returns:
+        The InventoryMember if user was found, None if user not found
+    """
+    user = await get_user_by_email(session, email)
+    if not user:
+        return None
+
+    # Check if already a member
+    result = await session.execute(
+        select(InventoryMember).where(
+            InventoryMember.inventory_id == inventory_id,
+            InventoryMember.user_id == user.id,
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        return existing
+
+    return await add_inventory_member(session, inventory_id, user.id)
+
+
 # ===== Location Operations =====
 
 
 async def create_location(
     session: AsyncSession,
-    user_id: int,
+    inventory_id: int,
     name: str,
     description: Optional[str] = None,
     embedding: Optional[list[float]] = None,
@@ -52,7 +258,7 @@ async def create_location(
 
     Args:
         session: Database session
-        user_id: ID of the owning user
+        inventory_id: ID of the owning inventory
         name: Display name of the location (e.g., "Tim's Pocket")
         description: Optional description
         embedding: Optional vector embedding for semantic search
@@ -65,7 +271,7 @@ async def create_location(
         normalized_name = normalize_location_name(name)
     
     location = Location(
-        user_id=user_id,
+        inventory_id=inventory_id,
         name=name,
         normalized_name=normalized_name,
         description=description,
@@ -79,33 +285,33 @@ async def create_location(
 
 
 async def get_location(
-    session: AsyncSession, user_id: int, location_id: int
+    session: AsyncSession, inventory_id: int, location_id: int
 ) -> Optional[Location]:
-    """Get a location by ID, filtered by user_id for security.
+    """Get a location by ID, filtered by inventory_id for security.
 
     Args:
         session: Database session
-        user_id: ID of the owning user (prevents IDOR attacks)
+        inventory_id: ID of the owning inventory (prevents IDOR attacks)
         location_id: ID of the location to retrieve
 
     Returns:
-        The location if found and owned by user, None otherwise
+        The location if found and owned by inventory, None otherwise
     """
     result = await session.execute(
         select(Location).where(
             Location.id == location_id,
-            Location.user_id == user_id,
+            Location.inventory_id == inventory_id,
         )
     )
     return result.scalar_one_or_none()
 
 
-async def get_location_by_name(session: AsyncSession, user_id: int, name: str) -> Optional[Location]:
+async def get_location_by_name(session: AsyncSession, inventory_id: int, name: str) -> Optional[Location]:
     """Get a location by normalized name.
 
     Args:
         session: Database session
-        user_id: ID of the owning user
+        inventory_id: ID of the owning inventory
         name: Name of the location (will be normalized for lookup)
 
     Returns:
@@ -115,31 +321,31 @@ async def get_location_by_name(session: AsyncSession, user_id: int, name: str) -
     result = await session.execute(
         select(Location).where(
             Location.normalized_name == normalized,
-            Location.user_id == user_id
+            Location.inventory_id == inventory_id
         )
     )
     return result.scalar_one_or_none()
 
 
-async def list_locations(session: AsyncSession, user_id: int) -> list[Location]:
-    """List all locations for a user.
+async def list_locations(session: AsyncSession, inventory_id: int) -> list[Location]:
+    """List all locations for an inventory.
 
     Args:
         session: Database session
-        user_id: ID of the owning user
+        inventory_id: ID of the owning inventory
 
     Returns:
-        List of all locations for the user
+        List of all locations for the inventory
     """
     result = await session.execute(
-        select(Location).where(Location.user_id == user_id).order_by(Location.name)
+        select(Location).where(Location.inventory_id == inventory_id).order_by(Location.name)
     )
     return list(result.scalars().all())
 
 
 async def get_or_create_location(
     session: AsyncSession,
-    user_id: int,
+    inventory_id: int,
     name: str,
     description: Optional[str] = None,
     embedding: Optional[list[float]] = None,
@@ -149,7 +355,7 @@ async def get_or_create_location(
 
     Args:
         session: Database session
-        user_id: ID of the owning user
+        inventory_id: ID of the owning inventory
         name: Name of the location (any format - will be normalized for lookup)
         description: Optional description (used only if creating)
         embedding: Optional embedding (used only if creating)
@@ -159,7 +365,7 @@ async def get_or_create_location(
         The existing or newly created location
     """
     # Try to find existing location by normalized name
-    location = await get_location_by_name(session, user_id, name)
+    location = await get_location_by_name(session, inventory_id, name)
     if location:
         return location
     
@@ -170,7 +376,7 @@ async def get_or_create_location(
     if not display_name:
         display_name = name.title()
     
-    return await create_location(session, user_id, display_name, description, embedding, normalized)
+    return await create_location(session, inventory_id, display_name, description, embedding, normalized)
 
 
 # ===== Inventory Item Operations =====
@@ -178,7 +384,7 @@ async def get_or_create_location(
 
 async def create_item(
     session: AsyncSession,
-    user_id: int,
+    inventory_id: int,
     name: str,
     quantity: int,
     category: str,
@@ -190,7 +396,7 @@ async def create_item(
 
     Args:
         session: Database session
-        user_id: ID of the owning user
+        inventory_id: ID of the owning inventory
         name: Name of the item
         quantity: Quantity of the item
         category: Category (e.g., "meat", "vegetables", "electronics")
@@ -202,7 +408,7 @@ async def create_item(
         The created inventory item
     """
     item = InventoryItem(
-        user_id=user_id,
+        inventory_id=inventory_id,
         name=name,
         quantity=quantity,
         category=category,
@@ -213,27 +419,27 @@ async def create_item(
     session.add(item)
     await session.commit()
     await session.refresh(item)
-    logger.info(f"Created item: {item.name} (id={item.id}, user_id={user_id})")
+    logger.info(f"Created item: {item.name} (id={item.id}, inventory_id={inventory_id})")
     return item
 
 
-async def get_item(session: AsyncSession, user_id: int, item_id: int) -> Optional[InventoryItem]:
+async def get_item(session: AsyncSession, inventory_id: int, item_id: int) -> Optional[InventoryItem]:
     """Get an inventory item by ID.
 
     Args:
         session: Database session
-        user_id: ID of the owning user
+        inventory_id: ID of the owning inventory
         item_id: ID of the item to retrieve
 
     Returns:
-        The inventory item if found and owned by user, None otherwise
+        The inventory item if found and owned by inventory, None otherwise
     """
     result = await session.execute(
         select(InventoryItem)
         .options(selectinload(InventoryItem.location))
         .where(
             InventoryItem.id == item_id,
-            InventoryItem.user_id == user_id,
+            InventoryItem.inventory_id == inventory_id,
         )
     )
     item: InventoryItem | None = result.scalar_one_or_none()
@@ -242,7 +448,7 @@ async def get_item(session: AsyncSession, user_id: int, item_id: int) -> Optiona
 
 async def list_items(
     session: AsyncSession,
-    user_id: int,
+    inventory_id: int,
     category: Optional[str] = None,
     location_id: Optional[int] = None,
     location_name: Optional[str] = None,
@@ -252,16 +458,16 @@ async def list_items(
 
     Args:
         session: Database session
-        user_id: ID of the owning user
+        inventory_id: ID of the owning inventory
         category: Optional category filter
         location_id: Optional location ID filter
         location_name: Optional location name filter (case-insensitive)
         limit: Maximum number of items to return
 
     Returns:
-        List of inventory items owned by the user
+        List of inventory items in the inventory
     """
-    query = select(InventoryItem).options(selectinload(InventoryItem.location)).where(InventoryItem.user_id == user_id)
+    query = select(InventoryItem).options(selectinload(InventoryItem.location)).where(InventoryItem.inventory_id == inventory_id)
 
     if category:
         query = query.where(InventoryItem.category == category)
@@ -281,7 +487,7 @@ async def list_items(
 
 async def update_item(
     session: AsyncSession,
-    user_id: int,
+    inventory_id: int,
     item_id: int,
     name: Optional[str] = None,
     quantity: Optional[int] = None,
@@ -294,7 +500,7 @@ async def update_item(
 
     Args:
         session: Database session
-        user_id: ID of the owning user
+        inventory_id: ID of the owning inventory
         item_id: ID of the item to update
         name: New name (if provided)
         quantity: New quantity (if provided)
@@ -306,7 +512,7 @@ async def update_item(
     Returns:
         The updated item if found, None otherwise
     """
-    item = await get_item(session, user_id, item_id)
+    item = await get_item(session, inventory_id, item_id)
     if not item:
         return None
 
@@ -329,12 +535,12 @@ async def update_item(
     return item
 
 
-async def delete_item(session: AsyncSession, user_id: int, item_id: int) -> bool:
+async def delete_item(session: AsyncSession, inventory_id: int, item_id: int) -> bool:
     """Delete an inventory item.
 
     Args:
         session: Database session
-        user_id: ID of the owning user
+        inventory_id: ID of the owning inventory
         item_id: ID of the item to delete
 
     Returns:
@@ -343,7 +549,7 @@ async def delete_item(session: AsyncSession, user_id: int, item_id: int) -> bool
     result = await session.execute(
         delete(InventoryItem).where(
             InventoryItem.id == item_id,
-            InventoryItem.user_id == user_id,
+            InventoryItem.inventory_id == inventory_id,
         )
     )
     await session.commit()
@@ -356,7 +562,7 @@ async def delete_item(session: AsyncSession, user_id: int, item_id: int) -> bool
 
 async def search_items_by_text(
     session: AsyncSession,
-    user_id: int,
+    inventory_id: int,
     query: str,
     location_id: Optional[int] = None,
     location_name: Optional[str] = None,
@@ -366,7 +572,7 @@ async def search_items_by_text(
 
     Args:
         session: Database session
-        user_id: ID of the owning user
+        inventory_id: ID of the owning inventory
         query: Search query
         location_id: Optional location ID filter
         location_name: Optional location name filter
@@ -379,7 +585,7 @@ async def search_items_by_text(
         select(InventoryItem)
         .options(selectinload(InventoryItem.location))
         .where(
-            (InventoryItem.user_id == user_id) &
+            (InventoryItem.inventory_id == inventory_id) &
             ((InventoryItem.name.ilike(f"%{query}%"))
             | (InventoryItem.description.ilike(f"%{query}%")))
         )
@@ -399,7 +605,7 @@ async def search_items_by_text(
 
 async def search_items_by_embedding(
     session: AsyncSession,
-    user_id: int,
+    inventory_id: int,
     query_embedding: list[float],
     location_id: Optional[int] = None,
     location_name: Optional[str] = None,
@@ -409,7 +615,7 @@ async def search_items_by_embedding(
 
     Args:
         session: Database session
-        user_id: ID of the owning user
+        inventory_id: ID of the owning inventory
         query_embedding: Vector embedding of the search query
         location_id: Optional location ID filter
         location_name: Optional location name filter
@@ -425,7 +631,7 @@ async def search_items_by_embedding(
         select(InventoryItem, distance)
         .options(selectinload(InventoryItem.location))
         .where(
-            (InventoryItem.user_id == user_id) &
+            (InventoryItem.inventory_id == inventory_id) &
             (InventoryItem.embedding.isnot(None))
         )
     )
@@ -545,3 +751,268 @@ async def get_user_by_email(
     """
     result = await session.execute(select(User).where(User.email == email))
     return result.scalar_one_or_none()
+
+
+# ===== Item Lot Operations =====
+
+
+async def create_lot(
+    session: AsyncSession,
+    item_id: int,
+    quantity: int,
+    added_by_user_id: Optional[int] = None,
+    notes: Optional[str] = None,
+) -> ItemLot:
+    """Create a new lot for an inventory item.
+
+    Also updates the parent item's quantity by adding the lot quantity.
+
+    Args:
+        session: Database session
+        item_id: ID of the parent inventory item
+        quantity: Quantity for this lot
+        added_by_user_id: Optional ID of the user who added the lot
+        notes: Optional notes about the lot
+
+    Returns:
+        The created item lot
+    """
+    # Get the parent item and update its quantity
+    result = await session.execute(
+        select(InventoryItem).where(InventoryItem.id == item_id)
+    )
+    item = result.scalar_one_or_none()
+    if item is None:
+        raise ValueError(f"Item with id={item_id} not found")
+
+    lot = ItemLot(
+        item_id=item_id,
+        quantity=quantity,
+        added_by_user_id=added_by_user_id,
+        notes=notes,
+    )
+    session.add(lot)
+    item.quantity += quantity
+
+    await session.commit()
+    await session.refresh(lot)
+    await session.refresh(item)
+    logger.info(f"Created lot id={lot.id} for item id={item_id} (qty={quantity})")
+    return lot
+
+
+async def get_lots_for_item(
+    session: AsyncSession,
+    item_id: int,
+) -> list[ItemLot]:
+    """Get all lots for an item, ordered by added_at ascending (oldest first).
+
+    Args:
+        session: Database session
+        item_id: ID of the parent inventory item
+
+    Returns:
+        List of item lots with eager-loaded user info
+    """
+    result = await session.execute(
+        select(ItemLot)
+        .options(selectinload(ItemLot.added_by))
+        .where(ItemLot.item_id == item_id)
+        .order_by(ItemLot.added_at.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def reduce_lot(
+    session: AsyncSession,
+    lot_id: int,
+    quantity: int,
+) -> Optional[ItemLot]:
+    """Reduce a lot's quantity by the given amount.
+
+    If quantity >= lot.quantity, the lot is deleted entirely.
+    Also updates the parent item's quantity accordingly.
+    If the item has no lots remaining, the item is deleted too.
+
+    Args:
+        session: Database session
+        lot_id: ID of the lot to reduce
+        quantity: Amount to subtract from the lot
+
+    Returns:
+        The lot if it still exists, None if deleted
+    """
+    result = await session.execute(
+        select(ItemLot).where(ItemLot.id == lot_id)
+    )
+    lot = result.scalar_one_or_none()
+    if lot is None:
+        return None
+
+    # Get the parent item
+    item_result = await session.execute(
+        select(InventoryItem).where(InventoryItem.id == lot.item_id)
+    )
+    item = item_result.scalar_one()
+
+    if quantity >= lot.quantity:
+        # Delete the lot entirely
+        removed = lot.quantity
+        await session.delete(lot)
+        item.quantity -= removed
+        logger.info(f"Deleted lot id={lot_id} (removed qty={removed})")
+
+        # Check if item has any remaining lots
+        remaining = await session.execute(
+            select(ItemLot).where(
+                ItemLot.item_id == item.id,
+                ItemLot.id != lot_id,
+            )
+        )
+        if not remaining.scalars().first():
+            await session.delete(item)
+            logger.info(f"Deleted item id={item.id} (no lots remaining)")
+
+        await session.commit()
+        return None
+    else:
+        lot.quantity -= quantity
+        item.quantity -= quantity
+        await session.commit()
+        await session.refresh(lot)
+        logger.info(f"Reduced lot id={lot_id} by {quantity} (new qty={lot.quantity})")
+        return lot
+
+
+async def delete_lot(
+    session: AsyncSession,
+    lot_id: int,
+) -> bool:
+    """Delete a lot entirely.
+
+    Subtracts the lot's quantity from the parent item.
+    If the item has no lots remaining, the item is deleted too.
+
+    Args:
+        session: Database session
+        lot_id: ID of the lot to delete
+
+    Returns:
+        True if the lot was deleted, False if not found
+    """
+    result = await session.execute(
+        select(ItemLot).where(ItemLot.id == lot_id)
+    )
+    lot = result.scalar_one_or_none()
+    if lot is None:
+        return False
+
+    # Get the parent item
+    item_result = await session.execute(
+        select(InventoryItem).where(InventoryItem.id == lot.item_id)
+    )
+    item = item_result.scalar_one()
+
+    item.quantity -= lot.quantity
+    await session.delete(lot)
+    logger.info(f"Deleted lot id={lot_id} (qty={lot.quantity})")
+
+    # Check if item has any remaining lots
+    remaining = await session.execute(
+        select(ItemLot).where(
+            ItemLot.item_id == item.id,
+            ItemLot.id != lot_id,
+        )
+    )
+    if not remaining.scalars().first():
+        await session.delete(item)
+        logger.info(f"Deleted item id={item.id} (no lots remaining)")
+
+    await session.commit()
+    return True
+
+
+async def get_oldest_items(
+    session: AsyncSession,
+    inventory_id: int,
+    location_name: Optional[str] = None,
+    limit: int = 10,
+) -> list[dict]:
+    """Find the oldest item lots in an inventory.
+
+    Args:
+        session: Database session
+        inventory_id: ID of the inventory to search
+        location_name: Optional location name filter (normalized for matching)
+        limit: Maximum number of results
+
+    Returns:
+        List of dicts with item_name, item_id, lot_id, lot_quantity,
+        added_at (ISO string), and location_name
+    """
+    stmt = (
+        select(
+            InventoryItem.name.label("item_name"),
+            InventoryItem.id.label("item_id"),
+            ItemLot.id.label("lot_id"),
+            ItemLot.quantity.label("lot_quantity"),
+            ItemLot.added_at,
+            Location.name.label("location_name"),
+        )
+        .join(InventoryItem, ItemLot.item_id == InventoryItem.id)
+        .join(Location, InventoryItem.location_id == Location.id)
+        .where(InventoryItem.inventory_id == inventory_id)
+    )
+
+    if location_name:
+        normalized = normalize_location_name(location_name)
+        stmt = stmt.where(Location.normalized_name == normalized)
+
+    stmt = stmt.order_by(ItemLot.added_at.asc()).limit(limit)
+
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    return [
+        {
+            "item_name": row.item_name,
+            "item_id": row.item_id,
+            "lot_id": row.lot_id,
+            "lot_quantity": row.lot_quantity,
+            "added_at": row.added_at.isoformat() if row.added_at else None,
+            "location_name": row.location_name,
+        }
+        for row in rows
+    ]
+
+
+async def sync_item_quantity(
+    session: AsyncSession,
+    item_id: int,
+) -> int:
+    """Recalculate item quantity from sum of all lot quantities.
+
+    Args:
+        session: Database session
+        item_id: ID of the item to sync
+
+    Returns:
+        The new calculated quantity
+    """
+    result = await session.execute(
+        select(func.sum(ItemLot.quantity)).where(ItemLot.item_id == item_id)
+    )
+    total = result.scalar() or 0
+
+    item_result = await session.execute(
+        select(InventoryItem).where(InventoryItem.id == item_id)
+    )
+    item = item_result.scalar_one_or_none()
+    if item is None:
+        raise ValueError(f"Item with id={item_id} not found")
+
+    item.quantity = total
+    await session.commit()
+    await session.refresh(item)
+    logger.info(f"Synced item id={item_id} quantity to {total}")
+    return total

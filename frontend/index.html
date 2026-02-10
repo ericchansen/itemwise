@@ -44,11 +44,14 @@
     <header class="border-b border-border sticky top-0 z-10 bg-bg/90 backdrop-blur-sm">
         <div class="max-w-2xl mx-auto px-6 py-4 flex items-center justify-between">
             <h1 class="text-lg font-medium tracking-tight">inventory</h1>
+            <select id="inventory-selector" class="hidden px-3 py-1.5 bg-surface border border-border rounded-lg text-sm text-white" onchange="switchInventory()">
+            </select>
             <div class="flex items-center gap-3">
                 <div id="app-tabs" class="hidden">
                     <div class="flex gap-1 bg-surface rounded-lg p-1">
                         <button onclick="showTab('chat')" id="tab-chat" class="tab-btn px-4 py-1.5 rounded-md text-sm transition-all bg-white/10 text-white">chat</button>
                         <button onclick="showTab('inventory')" id="tab-inventory" class="tab-btn px-4 py-1.5 rounded-md text-sm transition-all text-muted hover:text-white">items</button>
+                        <button onclick="showTab('settings')" id="tab-settings" class="tab-btn px-4 py-1.5 rounded-md text-sm transition-all text-muted hover:text-white">sharing</button>
                     </div>
                 </div>
                 <button id="logout-btn" onclick="logout()" class="hidden px-3 py-1.5 text-sm text-muted hover:text-white transition-colors">logout</button>
@@ -92,6 +95,12 @@
                             </button>
                             <button onclick="sendMessage('Show all items')" class="px-3 py-1.5 bg-card border border-border rounded-full text-sm text-muted hover:text-white hover:border-muted transition-all">
                                 Show all items
+                            </button>
+                            <button onclick="sendMessage('What\'s the oldest stuff in my freezer?')" class="px-3 py-1.5 bg-card border border-border rounded-full text-sm text-muted hover:text-white hover:border-muted transition-all">
+                                What's oldest in the freezer?
+                            </button>
+                            <button onclick="sendMessage('What recipe should I make with what I have?')" class="px-3 py-1.5 bg-card border border-border rounded-full text-sm text-muted hover:text-white hover:border-muted transition-all">
+                                What recipe can I make?
                             </button>
                         </div>
                     </div>
@@ -147,6 +156,19 @@
                 </button>
             </div>
         </div>
+
+        <!-- Settings Tab -->
+        <div id="settings-tab" class="tab-content hidden">
+            <div class="bg-surface border border-border rounded-2xl p-5">
+                <h2 class="font-medium mb-4">Inventory Members</h2>
+                <div id="members-list" class="space-y-2 mb-4"></div>
+                <form onsubmit="handleAddMember(event)" class="flex gap-3">
+                    <input type="email" id="member-email" required placeholder="Add member by email" class="flex-1 px-4 py-2.5 bg-card border border-border rounded-lg text-white placeholder-muted">
+                    <button type="submit" class="px-4 py-2.5 bg-accent text-white rounded-lg font-medium hover:bg-accent/90 transition-all">Invite</button>
+                </form>
+                <div id="member-feedback" class="hidden mt-3 px-4 py-2.5 rounded-lg text-sm"></div>
+            </div>
+        </div>
     </main>
 
     <!-- Add Modal -->
@@ -186,6 +208,7 @@
         const API_URL = window.location.origin;
         let searchTimeout;
         let authMode = 'login';
+        let activeInventoryId = null;
 
         // ===== Auth =====
         function getToken() { return localStorage.getItem('token'); }
@@ -197,11 +220,15 @@
 
         async function authFetch(url, opts = {}) {
             opts.headers = { ...opts.headers, ...authHeaders() };
+            if (activeInventoryId) {
+                opts.headers['X-Inventory-Id'] = activeInventoryId.toString();
+            }
             let res = await fetch(url, opts);
             if (res.status === 401 && getRefreshToken()) {
                 const refreshed = await tryRefresh();
                 if (refreshed) {
                     opts.headers = { ...opts.headers, ...authHeaders() };
+                    if (activeInventoryId) opts.headers['X-Inventory-Id'] = activeInventoryId.toString();
                     res = await fetch(url, opts);
                 } else { logout(); }
             }
@@ -289,6 +316,7 @@
             document.getElementById('app-tabs').classList.remove('hidden');
             document.getElementById('logout-btn').classList.remove('hidden');
             document.querySelectorAll('main').forEach(el => el.classList.remove('hidden'));
+            loadInventories();
         }
 
         function showAuthScreen() {
@@ -312,6 +340,7 @@
             btn.classList.add('bg-white/10', 'text-white');
             btn.classList.remove('text-muted');
             if (tab === 'inventory') { loadInventory(); loadLocations(); }
+            if (tab === 'settings') { loadMembers(); }
         }
 
         function addMessage(content, isUser = false) {
@@ -366,7 +395,7 @@
                         <div class="w-10 h-10 bg-card rounded-lg flex items-center justify-center text-sm font-medium text-muted">${item.quantity}</div>
                         <div class="flex-1 min-w-0">
                             <div class="font-medium truncate">${item.name}</div>
-                            <div class="text-sm text-muted">${item.category}${item.location ? ' · ' + item.location : ''}</div>
+                            <div class="text-sm text-muted">${item.category}${item.location ? ' · ' + item.location : ''}${item.created_at ? ' · ' + new Date(item.created_at).toLocaleDateString() : ''}</div>
                         </div>
                         <button onclick="deleteItem(${item.id})" class="p-2 text-muted opacity-0 group-hover:opacity-100 hover:text-red-400 transition-all">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -388,6 +417,71 @@
                     data.locations.map(l => `<option value="${l.name}">${l.name}</option>`).join('');
                 select.value = val;
             } catch (e) {}
+        }
+
+        // ===== Inventory Sharing =====
+        async function loadInventories() {
+            try {
+                const res = await authFetch(`${API_URL}/api/inventories`);
+                const data = await res.json();
+                const sel = document.getElementById('inventory-selector');
+                sel.innerHTML = data.inventories.map(inv =>
+                    `<option value="${inv.id}" ${inv.id === activeInventoryId ? 'selected' : ''}>${inv.name}</option>`
+                ).join('');
+                if (!activeInventoryId && data.inventories.length > 0) {
+                    activeInventoryId = data.inventories[0].id;
+                }
+                sel.classList.remove('hidden');
+            } catch (e) { console.error('Failed to load inventories', e); }
+        }
+
+        function switchInventory() {
+            activeInventoryId = parseInt(document.getElementById('inventory-selector').value);
+            loadInventory();
+            loadLocations();
+        }
+
+        async function loadMembers() {
+            if (!activeInventoryId) return;
+            try {
+                const res = await authFetch(`${API_URL}/api/inventories/${activeInventoryId}/members`);
+                const data = await res.json();
+                document.getElementById('members-list').innerHTML = data.members.map(m => `
+                    <div class="flex items-center justify-between p-3 bg-card border border-border rounded-lg">
+                        <span class="text-sm">${m.email || 'Unknown'}</span>
+                        <span class="text-xs text-muted">${m.joined_at ? new Date(m.joined_at).toLocaleDateString() : ''}</span>
+                    </div>
+                `).join('') || '<p class="text-muted text-sm">No members yet</p>';
+            } catch (e) { console.error(e); }
+        }
+
+        async function handleAddMember(e) {
+            e.preventDefault();
+            const email = document.getElementById('member-email').value;
+            const fb = document.getElementById('member-feedback');
+            try {
+                const res = await authFetch(`${API_URL}/api/inventories/${activeInventoryId}/members`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+                if (res.ok) {
+                    fb.textContent = `Added ${email}`;
+                    fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-green-500/10 border border-green-500/20 text-green-400';
+                    fb.classList.remove('hidden');
+                    document.getElementById('member-email').value = '';
+                    loadMembers();
+                } else {
+                    const err = await res.json();
+                    fb.textContent = err.detail || 'Failed to add member';
+                    fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
+                    fb.classList.remove('hidden');
+                }
+            } catch (e) {
+                fb.textContent = 'Connection error';
+                fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
+                fb.classList.remove('hidden');
+            }
         }
 
         function debounceSearch() {

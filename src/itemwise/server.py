@@ -11,14 +11,19 @@ from fastmcp.exceptions import ToolError
 from .database.crud import (
     create_item,
     create_location,
+    create_lot,
     create_user,
     delete_item,
     get_item,
+    get_lots_for_item,  # noqa: F401
+    get_oldest_items,
     get_or_create_location,
     get_user_by_email,
+    get_user_default_inventory,
     list_items,
     list_locations,
     log_transaction,
+    reduce_lot,  # noqa: F401
     search_items_by_embedding,
     search_items_by_text,
     update_item,
@@ -34,18 +39,23 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def _get_default_user_id(session) -> int:
-    """Get or create a default user for MCP server operations."""
+async def _get_default_context(session) -> tuple[int, int]:
+    """Get or create a default user and inventory for MCP server operations.
+
+    Returns:
+        Tuple of (user_id, inventory_id)
+    """
     email = "mcp-user@local"
     user = await get_user_by_email(session, email)
     if not user:
-        # Create default user with dummy hash
         user = await create_user(
             session,
             email,
             "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.F3z3z3z3z3z3z3"
         )
-    return user.id
+
+    inventory = await get_user_default_inventory(session, user.id)
+    return user.id, inventory.id
 
 
 def _get_item_text_for_embedding(name: str, description: Optional[str] = None, category: Optional[str] = None) -> str:
@@ -110,13 +120,13 @@ async def add_item(
     """
     try:
         async with AsyncSessionLocal() as session:
-            user_id = await _get_default_user_id(session)
+            user_id, inventory_id = await _get_default_context(session)
 
             # Get or create location if specified
             location_id = None
             location_name = None
             if location:
-                loc = await get_or_create_location(session, user_id, location.strip())
+                loc = await get_or_create_location(session, inventory_id, location.strip())
                 location_id = loc.id
                 location_name = loc.name
 
@@ -138,16 +148,24 @@ async def add_item(
                 },
             )
 
-            # Create the item
+            # Create the item (quantity starts at 0, create_lot will set it)
             item = await create_item(
                 session,
-                user_id=user_id,
+                inventory_id=inventory_id,
                 name=name,
-                quantity=quantity,
+                quantity=0,
                 category=category,
                 description=description if description else None,
                 location_id=location_id,
                 embedding=embedding,
+            )
+
+            # Create a lot for tracking (this adds to item.quantity)
+            await create_lot(
+                session,
+                item_id=item.id,
+                quantity=quantity,
+                added_by_user_id=user_id,
             )
 
             return {
@@ -186,10 +204,10 @@ async def update_item_tool(
     """
     try:
         async with AsyncSessionLocal() as session:
-            user_id = await _get_default_user_id(session)
+            user_id, inventory_id = await _get_default_context(session)
 
             # Check if item exists
-            existing_item = await get_item(session, user_id, item_id)
+            existing_item = await get_item(session, inventory_id, item_id)
             if not existing_item:
                 raise ToolError(f"Item with ID {item_id} not found")
 
@@ -198,7 +216,7 @@ async def update_item_tool(
             location_name = None
             if location is not None:
                 if location:
-                    loc = await get_or_create_location(session, user_id, location.strip())
+                    loc = await get_or_create_location(session, inventory_id, location.strip())
                     location_id = loc.id
                     location_name = loc.name
 
@@ -228,7 +246,7 @@ async def update_item_tool(
             # Update the item
             updated_item = await update_item(
                 session,
-                user_id=user_id,
+                inventory_id=inventory_id,
                 item_id=item_id,
                 name=name,
                 quantity=quantity,
@@ -272,10 +290,10 @@ async def remove_item(item_id: int) -> dict[str, Any]:
     """
     try:
         async with AsyncSessionLocal() as session:
-            user_id = await _get_default_user_id(session)
+            user_id, inventory_id = await _get_default_context(session)
 
             # Check if item exists
-            item = await get_item(session, user_id, item_id)
+            item = await get_item(session, inventory_id, item_id)
             if not item:
                 raise ToolError(f"Item with ID {item_id} not found")
 
@@ -291,7 +309,7 @@ async def remove_item(item_id: int) -> dict[str, Any]:
             )
 
             # Delete the item
-            deleted = await delete_item(session, user_id, item_id)
+            deleted = await delete_item(session, inventory_id, item_id)
 
             if deleted:
                 msg = f"Removed {item_name}"
@@ -333,11 +351,11 @@ async def list_inventory(
     """
     try:
         async with AsyncSessionLocal() as session:
-            user_id = await _get_default_user_id(session)
+            user_id, inventory_id = await _get_default_context(session)
 
             items = await list_items(
                 session,
-                user_id=user_id,
+                inventory_id=inventory_id,
                 category=category,
                 location_name=location,
             )
@@ -393,7 +411,7 @@ async def search_inventory(
     """
     try:
         async with AsyncSessionLocal() as session:
-            user_id = await _get_default_user_id(session)
+            user_id, inventory_id = await _get_default_context(session)
 
             # Log the search operation
             await log_transaction(
@@ -408,7 +426,7 @@ async def search_inventory(
             # Try semantic search first
             semantic_results = await search_items_by_embedding(
                 session,
-                user_id,
+                inventory_id,
                 query_embedding,
                 location_name=location,
                 limit=10,
@@ -417,7 +435,7 @@ async def search_inventory(
             # Also do text search as fallback
             text_results = await search_items_by_text(
                 session,
-                user_id,
+                inventory_id,
                 query,
                 location_name=location,
                 limit=10,
@@ -487,7 +505,7 @@ async def add_location(
     """
     try:
         async with AsyncSessionLocal() as session:
-            user_id = await _get_default_user_id(session)
+            user_id, inventory_id = await _get_default_context(session)
 
             # Generate embedding for the location
             loc_text = f"{name} | {description}" if description else name
@@ -495,7 +513,7 @@ async def add_location(
 
             location = await create_location(
                 session,
-                user_id=user_id,
+                inventory_id=inventory_id,
                 name=name,
                 description=description if description else None,
                 embedding=embedding,
@@ -532,8 +550,8 @@ async def get_locations() -> dict[str, Any]:
     """
     try:
         async with AsyncSessionLocal() as session:
-            user_id = await _get_default_user_id(session)
-            locations = await list_locations(session, user_id)
+            user_id, inventory_id = await _get_default_context(session)
+            locations = await list_locations(session, inventory_id)
 
             return {
                 "status": "success",
@@ -550,6 +568,40 @@ async def get_locations() -> dict[str, Any]:
     except Exception as e:
         logger.exception("Error listing locations")
         raise ToolError(f"Failed to list locations: {str(e)}")
+
+
+@mcp.tool()  # type: ignore[misc]
+async def get_oldest_items_tool(
+    location: Optional[str] = None,
+    limit: int = 10,
+) -> dict[str, Any]:
+    """Get the oldest items in inventory based on when they were added.
+
+    Use this when the user asks about old stock, what to use first, or what's been sitting longest.
+
+    Args:
+        location: Optional location filter (e.g., "Freezer", "Garage")
+        limit: Maximum number of items to return (default: 10)
+
+    Returns:
+        Dictionary with oldest items including their add dates
+
+    Examples:
+        - "What's the oldest stuff in my freezer?" -> get_oldest_items_tool(location="Freezer")
+        - "What should I use first?" -> get_oldest_items_tool()
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            _, inventory_id = await _get_default_context(session)
+            oldest = await get_oldest_items(session, inventory_id, location_name=location, limit=limit)
+            return {
+                "status": "success",
+                "count": len(oldest),
+                "items": oldest,
+            }
+    except Exception as e:
+        logger.exception("Error getting oldest items")
+        raise ToolError(f"Failed to get oldest items: {str(e)}")
 
 
 def main() -> None:

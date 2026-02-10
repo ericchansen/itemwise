@@ -18,12 +18,15 @@ from .crud import (
     update_item,
 )
 from .engine import AsyncSessionLocal, close_db, get_session, init_db
-from .models import Base, InventoryItem, Location, TransactionLog
+from .models import Base, Inventory, InventoryItem, InventoryMember, ItemLot, Location, TransactionLog
 
 __all__ = [
     # Models
     "Base",
+    "Inventory",
     "InventoryItem",
+    "InventoryMember",
+    "ItemLot",
     "Location",
     "TransactionLog",
     # Engine

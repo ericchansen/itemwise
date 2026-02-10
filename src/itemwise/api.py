@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated, Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Query, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -22,17 +22,23 @@ load_dotenv(_env_path)
 from .database.crud import (
     create_item,
     create_location,
+    create_lot,
     create_user,
     delete_item,
     get_item,
+    get_lots_for_item,
     get_or_create_location,
     get_user_by_email,
+    get_user_default_inventory,
+    is_inventory_member,
     list_items,
     list_locations,
     log_transaction,
+    reduce_lot,
     search_items_by_embedding,
     search_items_by_text,
     update_item,
+    get_oldest_items as get_oldest_items_crud,
 )
 from .database.engine import AsyncSessionLocal, close_db, init_db
 from .embeddings import generate_embedding
@@ -201,6 +207,28 @@ async def get_current_user(
     return token_data
 
 
+async def get_active_inventory_id(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    x_inventory_id: Annotated[int | None, Header()] = None,
+) -> int:
+    """Resolve the active inventory ID for the current request.
+
+    Uses X-Inventory-Id header if provided, otherwise falls back to
+    the user's default inventory.
+    """
+    if x_inventory_id is not None:
+        async with AsyncSessionLocal() as session:
+            if not await is_inventory_member(session, x_inventory_id, current_user.user_id):
+                raise HTTPException(status_code=403, detail="Not a member of this inventory")
+        return x_inventory_id
+
+    async with AsyncSessionLocal() as session:
+        inventory = await get_user_default_inventory(session, current_user.user_id)
+        if not inventory:
+            raise HTTPException(status_code=500, detail="Could not resolve default inventory")
+        return inventory.id
+
+
 # ===== Auth Endpoints =====
 
 
@@ -287,6 +315,7 @@ async def get_current_user_info(
 @app.get("/api/items")
 async def get_items(
     current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
     category: Optional[str] = Query(None, description="Filter by category"),
     location: Optional[str] = Query(None, description="Filter by location name"),
 ):
@@ -294,7 +323,7 @@ async def get_items(
     async with AsyncSessionLocal() as session:
         items = await list_items(
             session,
-            user_id=current_user.user_id,
+            inventory_id=inventory_id,
             category=category,
             location_name=location,
         )
@@ -318,6 +347,7 @@ async def get_items(
 @app.post("/api/items")
 async def create_new_item(
     current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
     item: ItemCreate,
 ):
     """Add a new item to inventory."""
@@ -326,7 +356,7 @@ async def create_new_item(
         location_id = None
         location_name = None
         if item.location:
-            loc = await get_or_create_location(session, current_user.user_id, item.location.strip())
+            loc = await get_or_create_location(session, inventory_id, item.location.strip())
             location_id = loc.id
             location_name = loc.name
 
@@ -349,7 +379,7 @@ async def create_new_item(
         # Create item
         new_item = await create_item(
             session,
-            user_id=current_user.user_id,
+            inventory_id=inventory_id,
             name=item.name,
             quantity=item.quantity,
             category=item.category,
@@ -375,11 +405,12 @@ async def create_new_item(
 @app.get("/api/items/{item_id}")
 async def get_single_item(
     current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
     item_id: int,
 ):
     """Get a single item by ID."""
     async with AsyncSessionLocal() as session:
-        item = await get_item(session, current_user.user_id, item_id)
+        item = await get_item(session, inventory_id, item_id)
         if not item:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
         return {
@@ -396,12 +427,13 @@ async def get_single_item(
 @app.put("/api/items/{item_id}")
 async def update_existing_item(
     current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
     item_id: int,
     item: ItemUpdate,
 ):
     """Update an existing item."""
     async with AsyncSessionLocal() as session:
-        existing = await get_item(session, current_user.user_id, item_id)
+        existing = await get_item(session, inventory_id, item_id)
         if not existing:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
 
@@ -409,7 +441,7 @@ async def update_existing_item(
         location_id = None
         if item.location is not None:
             if item.location:
-                loc = await get_or_create_location(session, current_user.user_id, item.location.strip())
+                loc = await get_or_create_location(session, inventory_id, item.location.strip())
                 location_id = loc.id
 
         # Generate new embedding if needed
@@ -432,7 +464,7 @@ async def update_existing_item(
         # Update item
         updated = await update_item(
             session,
-            user_id=current_user.user_id,
+            inventory_id=inventory_id,
             item_id=item_id,
             name=item.name,
             quantity=item.quantity,
@@ -459,11 +491,12 @@ async def update_existing_item(
 @app.delete("/api/items/{item_id}")
 async def delete_existing_item(
     current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
     item_id: int,
 ):
     """Delete an item from inventory."""
     async with AsyncSessionLocal() as session:
-        item = await get_item(session, current_user.user_id, item_id)
+        item = await get_item(session, inventory_id, item_id)
         if not item:
             raise HTTPException(status_code=404, detail=f"Item {item_id} not found")
 
@@ -477,7 +510,7 @@ async def delete_existing_item(
             data={"name": item_name},
         )
 
-        deleted = await delete_item(session, current_user.user_id, item_id)
+        deleted = await delete_item(session, inventory_id, item_id)
         if not deleted:
             raise HTTPException(status_code=500, detail="Failed to delete item")
 
@@ -493,6 +526,7 @@ async def delete_existing_item(
 @app.get("/api/search")
 async def search_items(
     current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
     q: str = Query(..., description="Search query"),
     location: Optional[str] = Query(None, description="Filter by location"),
 ):
@@ -510,12 +544,12 @@ async def search_items(
 
         # Semantic search
         semantic_results = await search_items_by_embedding(
-            session, current_user.user_id, query_embedding, location_name=location, limit=10
+            session, inventory_id, query_embedding, location_name=location, limit=10
         )
 
         # Text search fallback
         text_results = await search_items_by_text(
-            session, current_user.user_id, q, location_name=location, limit=10
+            session, inventory_id, q, location_name=location, limit=10
         )
 
         # Combine results
@@ -563,10 +597,11 @@ async def search_items(
 @app.get("/api/locations")
 async def get_all_locations(
     current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
 ):
     """List all storage locations."""
     async with AsyncSessionLocal() as session:
-        locations = await list_locations(session, current_user.user_id)
+        locations = await list_locations(session, inventory_id)
         return {
             "count": len(locations),
             "locations": [
@@ -583,6 +618,7 @@ async def get_all_locations(
 @app.post("/api/locations")
 async def create_new_location(
     current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
     location: LocationCreate,
 ):
     """Create a new storage location."""
@@ -593,7 +629,7 @@ async def create_new_location(
 
         new_loc = await create_location(
             session,
-            user_id=current_user.user_id,
+            inventory_id=inventory_id,
             name=location.name,
             description=location.description,
             embedding=embedding,
@@ -616,12 +652,109 @@ async def create_new_location(
         }
 
 
+# ===== Inventory Sharing Endpoints =====
+
+
+@app.get("/api/inventories")
+async def get_inventories(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+):
+    """List all inventories the current user is a member of."""
+    async with AsyncSessionLocal() as session:
+        from .database.crud import list_inventories
+        inventories = await list_inventories(session, current_user.user_id)
+        return {
+            "count": len(inventories),
+            "inventories": [
+                {
+                    "id": inv.id,
+                    "name": inv.name,
+                    "created_at": inv.created_at.isoformat() if inv.created_at else None,
+                    "member_count": len(inv.members) if inv.members else 0,
+                }
+                for inv in inventories
+            ],
+        }
+
+
+@app.get("/api/inventories/{inv_id}/members")
+async def get_inventory_members(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    inv_id: int,
+):
+    """List members of an inventory."""
+    async with AsyncSessionLocal() as session:
+        from .database.crud import list_inventory_members
+        if not await is_inventory_member(session, inv_id, current_user.user_id):
+            raise HTTPException(status_code=403, detail="Not a member of this inventory")
+        members = await list_inventory_members(session, inv_id)
+        return {
+            "count": len(members),
+            "members": [
+                {
+                    "id": m.id,
+                    "user_id": m.user_id,
+                    "email": m.user.email if m.user else None,
+                    "joined_at": m.joined_at.isoformat() if m.joined_at else None,
+                }
+                for m in members
+            ],
+        }
+
+
+class AddMemberRequest(BaseModel):
+    email: EmailStr
+
+
+@app.post("/api/inventories/{inv_id}/members")
+async def add_inventory_member_endpoint(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    inv_id: int,
+    request: AddMemberRequest,
+):
+    """Add a member to an inventory by email."""
+    async with AsyncSessionLocal() as session:
+        from .database.crud import add_member_by_email
+        if not await is_inventory_member(session, inv_id, current_user.user_id):
+            raise HTTPException(status_code=403, detail="Not a member of this inventory")
+        member = await add_member_by_email(session, inv_id, request.email)
+        if member is None:
+            raise HTTPException(status_code=404, detail=f"User with email {request.email} not found")
+        return {
+            "status": "success",
+            "message": f"Added {request.email} to inventory",
+            "member": {
+                "id": member.id,
+                "user_id": member.user_id,
+                "joined_at": member.joined_at.isoformat() if member.joined_at else None,
+            },
+        }
+
+
+@app.delete("/api/inventories/{inv_id}/members/{member_user_id}")
+async def remove_inventory_member_endpoint(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    inv_id: int,
+    member_user_id: int,
+):
+    """Remove a member from an inventory."""
+    async with AsyncSessionLocal() as session:
+        from .database.crud import remove_inventory_member
+        if not await is_inventory_member(session, inv_id, current_user.user_id):
+            raise HTTPException(status_code=403, detail="Not a member of this inventory")
+        removed = await remove_inventory_member(session, inv_id, member_user_id)
+        if not removed:
+            raise HTTPException(status_code=404, detail="Member not found")
+        return {"status": "success", "message": "Member removed"}
+
+
 # ===== Chat Endpoint =====
 
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(
     current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
     message: ChatMessage,
 ):
     """Process a natural language message about inventory.
@@ -630,12 +763,12 @@ async def chat(
     falls back to simple pattern matching.
     """
     if AZURE_OPENAI_ENABLED:
-        return await _chat_with_ai(message.message, current_user.user_id)
+        return await _chat_with_ai(message.message, current_user.user_id, inventory_id)
     else:
-        return await _chat_fallback(message.message, current_user.user_id)
+        return await _chat_fallback(message.message, inventory_id)
 
 
-async def _chat_with_ai(user_message: str, user_id: int) -> ChatResponse:
+async def _chat_with_ai(user_message: str, user_id: int, inventory_id: int) -> ChatResponse:
     """Process chat using Azure OpenAI with tool calling."""
     from .ai_client import process_chat_with_tools, generate_display_name
 
@@ -657,7 +790,7 @@ async def _chat_with_ai(user_message: str, user_id: int) -> ChatResponse:
                 logger.warning(f"Failed to generate display name: {e}")
             
             # Get or create location
-            loc = await get_or_create_location(session, user_id, location.strip(), display_name=display_name)
+            loc = await get_or_create_location(session, inventory_id, location.strip(), display_name=display_name)
             
             # Generate embedding
             item_text = _get_item_text_for_embedding(name, description, category)
@@ -670,18 +803,26 @@ async def _chat_with_ai(user_message: str, user_id: int) -> ChatResponse:
                 data={"name": name, "quantity": quantity, "category": category, "location": loc.name},
             )
             
-            # Create item
+            # Create item (quantity starts at 0, create_lot will set it)
             new_item = await create_item(
                 session,
-                user_id=user_id,
+                inventory_id=inventory_id,
                 name=name,
-                quantity=quantity,
+                quantity=0,
                 category=category,
                 description=description,
                 location_id=loc.id,
                 embedding=embedding,
             )
             
+            # Create a lot for tracking (this adds to item.quantity)
+            await create_lot(
+                session,
+                item_id=new_item.id,
+                quantity=quantity,
+                added_by_user_id=user_id,
+            )
+
             return {
                 "success": True,
                 "item": {
@@ -693,31 +834,70 @@ async def _chat_with_ai(user_message: str, user_id: int) -> ChatResponse:
                 },
             }
 
-    async def handle_remove_item(item_id: int, quantity: int | None = None) -> dict:
+    async def handle_remove_item(item_id: int, quantity: int | None = None, lot_id: int | None = None) -> dict:
         async with AsyncSessionLocal() as session:
-            item = await get_item(session, user_id, item_id)
+            item = await get_item(session, inventory_id, item_id)
             if not item:
                 return {"success": False, "error": f"Item {item_id} not found"}
-            
+
             item_name = item.name
-            current_qty = item.quantity
-            
-            if quantity is None or quantity >= current_qty:
-                # Remove completely
-                await log_transaction(session, operation="DELETE", item_id=item_id, data={"name": item_name})
-                await delete_item(session, user_id, item_id)
-                return {"success": True, "message": f"Removed all {current_qty} {item_name}"}
+            lots = await get_lots_for_item(session, item_id)
+
+            if lot_id is not None:
+                # Remove from specific lot
+                lot = next((lt for lt in lots if lt.id == lot_id), None)
+                if not lot:
+                    return {"success": False, "error": f"Lot {lot_id} not found for item {item_name}"}
+
+                remove_qty = quantity if quantity else lot.quantity
+                txn_data = {"lot_id": lot_id, "quantity_removed": remove_qty}
+                await log_transaction(session, operation="UPDATE", item_id=item_id, data=txn_data)
+                await reduce_lot(session, lot_id, remove_qty)
+                date_str = lot.added_at.strftime('%b %d, %Y') if lot.added_at else 'unknown'
+                return {"success": True, "message": f"Removed {remove_qty} {item_name} from batch dated {date_str}"}
+
+            elif lots:
+                # Remove from oldest lot first
+                remove_qty = quantity if quantity else item.quantity
+                remaining = remove_qty
+                removed_from = []
+                for lot in lots:  # already sorted oldest first
+                    if remaining <= 0:
+                        break
+                    take = min(remaining, lot.quantity)
+                    await reduce_lot(session, lot.id, take)
+                    removed_from.append(f"{take} from batch {lot.added_at.strftime('%b %d, %Y') if lot.added_at else 'unknown'}")
+                    remaining -= take
+
+                actual_removed = remove_qty - remaining
+                txn_data = {"name": item_name, "quantity_removed": actual_removed}
+                await log_transaction(session, operation="DELETE", item_id=item_id, data=txn_data)
+                lots_detail = [
+                    {"lot_id": lt.id, "quantity": lt.quantity, "added_at": lt.added_at.isoformat() if lt.added_at else None}
+                    for lt in lots
+                ] if len(lots) > 1 else None
+                return {
+                    "success": True,
+                    "message": f"Removed {actual_removed} {item_name}: {', '.join(removed_from)}",
+                    "lots": lots_detail,
+                }
             else:
-                # Reduce quantity
-                new_qty = current_qty - quantity
-                await log_transaction(session, operation="UPDATE", item_id=item_id, data={"quantity_removed": quantity})
-                await update_item(session, user_id, item_id, quantity=new_qty)
-                return {"success": True, "message": f"Removed {quantity} {item_name}, {new_qty} remaining"}
+                # No lots (legacy item), fall back to direct quantity management
+                current_qty = item.quantity
+                if quantity is None or quantity >= current_qty:
+                    await log_transaction(session, operation="DELETE", item_id=item_id, data={"name": item_name})
+                    await delete_item(session, inventory_id, item_id)
+                    return {"success": True, "message": f"Removed all {current_qty} {item_name}"}
+                else:
+                    new_qty = current_qty - quantity
+                    await log_transaction(session, operation="UPDATE", item_id=item_id, data={"quantity_removed": quantity})
+                    await update_item(session, inventory_id, item_id, quantity=new_qty)
+                    return {"success": True, "message": f"Removed {quantity} {item_name}, {new_qty} remaining"}
 
     async def handle_search_items(query: str, location: str | None = None) -> dict:
         async with AsyncSessionLocal() as session:
             query_embedding = generate_embedding(query)
-            results = await search_items_by_embedding(session, user_id, query_embedding, location_name=location, limit=10)
+            results = await search_items_by_embedding(session, inventory_id, query_embedding, location_name=location, limit=10)
             
             if not results:
                 return {"success": True, "count": 0, "items": []}
@@ -739,29 +919,43 @@ async def _chat_with_ai(user_message: str, user_id: int) -> ChatResponse:
 
     async def handle_list_items(location: str | None = None, category: str | None = None) -> dict:
         async with AsyncSessionLocal() as session:
-            items = await list_items(session, user_id, location_name=location, category=category)
+            items = await list_items(session, inventory_id, location_name=location, category=category)
+            result_items = []
+            for item in items:
+                lots = await get_lots_for_item(session, item.id)
+                result_items.append({
+                    "id": item.id,
+                    "name": item.name,
+                    "quantity": item.quantity,
+                    "category": item.category,
+                    "location": item.location.name if item.location else None,
+                    "lots": [
+                        {"lot_id": lt.id, "quantity": lt.quantity, "added_at": lt.added_at.isoformat() if lt.added_at else None}
+                        for lt in lots
+                    ] if lots else None,
+                })
             return {
                 "success": True,
-                "count": len(items),
-                "items": [
-                    {
-                        "id": item.id,
-                        "name": item.name,
-                        "quantity": item.quantity,
-                        "category": item.category,
-                        "location": item.location.name if item.location else None,
-                    }
-                    for item in items
-                ],
+                "count": len(result_items),
+                "items": result_items,
             }
 
     async def handle_list_locations() -> dict:
         async with AsyncSessionLocal() as session:
-            locations = await list_locations(session, user_id)
+            locations = await list_locations(session, inventory_id)
             return {
                 "success": True,
                 "count": len(locations),
                 "locations": [{"id": loc.id, "name": loc.name} for loc in locations],
+            }
+
+    async def handle_get_oldest_items(location: str | None = None, limit: int = 10) -> dict:
+        async with AsyncSessionLocal() as session:
+            oldest = await get_oldest_items_crud(session, inventory_id, location_name=location, limit=limit)
+            return {
+                "success": True,
+                "count": len(oldest),
+                "items": oldest,
             }
 
     tool_handlers = {
@@ -770,6 +964,7 @@ async def _chat_with_ai(user_message: str, user_id: int) -> ChatResponse:
         "search_items": handle_search_items,
         "list_items": handle_list_items,
         "list_locations": handle_list_locations,
+        "get_oldest_items": handle_get_oldest_items,
     }
 
     try:
@@ -788,7 +983,7 @@ async def _chat_with_ai(user_message: str, user_id: int) -> ChatResponse:
         return ChatResponse(response=user_msg, action="error")
 
 
-async def _chat_fallback(user_message: str, user_id: int) -> ChatResponse:
+async def _chat_fallback(user_message: str, inventory_id: int) -> ChatResponse:
     """Simple pattern-matching fallback when Azure OpenAI is not configured."""
     text = user_message.lower().strip()
     
@@ -802,7 +997,7 @@ async def _chat_fallback(user_message: str, user_id: int) -> ChatResponse:
                     location = loc_word.title()
                     break
             
-            items = await list_items(session, user_id, location_name=location)
+            items = await list_items(session, inventory_id, location_name=location)
             
             if not items:
                 return ChatResponse(
@@ -834,7 +1029,7 @@ async def _chat_fallback(user_message: str, user_id: int) -> ChatResponse:
                 return ChatResponse(response="What would you like to search for?")
             
             query_embedding = generate_embedding(search_terms)
-            raw_results = await search_items_by_embedding(session, user_id, query_embedding, limit=5)
+            raw_results = await search_items_by_embedding(session, inventory_id, query_embedding, limit=5)
             
             # Filter by similarity threshold (distance < 1.0 means reasonably similar)
             results = [(item, dist) for item, dist in raw_results if dist < 1.0]

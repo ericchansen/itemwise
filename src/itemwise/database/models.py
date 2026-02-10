@@ -33,16 +33,59 @@ class User(Base):
         return f"<User(id={self.id}, email='{self.email}')>"
 
 
+class Inventory(Base):
+    """Model for shared inventories (households)."""
+
+    __tablename__ = "inventories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    members = relationship("InventoryMember", back_populates="inventory", cascade="all, delete-orphan")
+    items = relationship("InventoryItem", back_populates="inventory")
+    locations = relationship("Location", back_populates="inventory")
+
+    def __repr__(self) -> str:
+        return f"<Inventory(id={self.id}, name='{self.name}')>"
+
+
+class InventoryMember(Base):
+    """Model for inventory membership (many-to-many users ↔ inventories)."""
+
+    __tablename__ = "inventory_members"
+    __table_args__ = (
+        UniqueConstraint('inventory_id', 'user_id', name='uq_inventory_member'),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    inventory_id: Mapped[int] = mapped_column(Integer, ForeignKey("inventories.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    # Relationships
+    inventory = relationship("Inventory", back_populates="members")
+    user = relationship("User")
+
+    def __repr__(self) -> str:
+        return f"<InventoryMember(inventory_id={self.inventory_id}, user_id={self.user_id})>"
+
+
 class Location(Base):
     """Model for storage locations (freezer, garage, closet, etc.)."""
 
     __tablename__ = "locations"
     __table_args__ = (
-        UniqueConstraint('user_id', 'normalized_name', name='uq_location_user_normalized_name'),
+        UniqueConstraint('inventory_id', 'normalized_name', name='uq_location_inventory_normalized_name'),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    inventory_id: Mapped[int] = mapped_column(Integer, ForeignKey("inventories.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False, index=True)  # Display name (e.g., "Tim's Pocket")
     normalized_name: Mapped[str] = mapped_column(String, nullable=False, index=True)  # For matching (e.g., "tims pocket")
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -56,10 +99,10 @@ class Location(Base):
     # Relationships
     if TYPE_CHECKING:
         items: Mapped[list["InventoryItem"]]
-        user: Mapped["User"]
+        inventory: Mapped["Inventory"]
     else:
         items = relationship("InventoryItem", back_populates="location")
-        user = relationship("User", backref="locations")
+        inventory = relationship("Inventory", back_populates="locations")
 
     def __repr__(self) -> str:
         return f"<Location(id={self.id}, name='{self.name}')>"
@@ -78,7 +121,7 @@ class InventoryItem(Base):
     location_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("locations.id"), nullable=True, index=True
     )
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    inventory_id: Mapped[int] = mapped_column(Integer, ForeignKey("inventories.id"), nullable=False, index=True)
     embedding: Mapped[Optional[list[float]]] = mapped_column(
         Vector(EMBEDDING_DIMENSION), nullable=True
     )
@@ -89,14 +132,40 @@ class InventoryItem(Base):
         DateTime(timezone=True), onupdate=func.now(), nullable=True
     )
 
-    # Relationship to location
+    # Relationships
     if TYPE_CHECKING:
         location: Mapped[Optional["Location"]]
     else:
         location = relationship("Location", back_populates="items")
+        inventory = relationship("Inventory", back_populates="items")
+        lots = relationship("ItemLot", back_populates="item", cascade="all, delete-orphan", order_by="ItemLot.added_at")
 
     def __repr__(self) -> str:
         return f"<InventoryItem(id={self.id}, name='{self.name}', quantity={self.quantity})>"
+
+
+class ItemLot(Base):
+    """Model for tracking individual batches/lots of items with dates."""
+
+    __tablename__ = "item_lots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    item_id: Mapped[int] = mapped_column(Integer, ForeignKey("inventory_items.id", ondelete="CASCADE"), nullable=False, index=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    added_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    added_by_user_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Relationships
+    item = relationship("InventoryItem", back_populates="lots")
+    added_by = relationship("User")
+
+    def __repr__(self) -> str:
+        return f"<ItemLot(id={self.id}, item_id={self.item_id}, quantity={self.quantity}, added_at={self.added_at})>"
 
 
 class TransactionLog(Base):

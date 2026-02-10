@@ -98,6 +98,13 @@ INVENTORY_TOOLS = [
                         "description": "Number of items to remove. If omitted or greater than current quantity, removes all.",
                         "minimum": 1,
                     },
+                    "lot_id": {
+                        "type": "integer",
+                        "description": (
+                            "Optional: ID of a specific lot/batch to remove from."
+                            " If not specified, removes from the oldest lot first."
+                        ),
+                    },
                 },
                 "required": ["item_id"],
             },
@@ -128,7 +135,10 @@ INVENTORY_TOOLS = [
         "type": "function",
         "function": {
             "name": "list_items",
-            "description": "List all items in inventory, optionally filtered by location or category",
+            "description": (
+                "List all items in inventory, optionally filtered by location or category."
+                " Returns items with their batch dates showing when they were added."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -155,6 +165,32 @@ INVENTORY_TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_oldest_items",
+            "description": (
+                "Get the oldest items in inventory based on when they were added."
+                " Use this when the user asks about old stock, what they should use"
+                " first, or what's been sitting longest."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "Optional: filter to a specific location (e.g., 'Freezer')",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of items to return (default: 10)",
+                        "minimum": 1,
+                        "maximum": 50,
+                    },
+                },
+            },
+        },
+    },
 ]
 
 SYSTEM_PROMPT = """You are an inventory management assistant. You help users track items
@@ -162,9 +198,11 @@ stored in various locations like freezers, garages, pantries, closets, and stora
 
 Your capabilities:
 - Add items to inventory (with name, quantity, category, and location)
-- Remove items or reduce quantities
+- Remove items or reduce quantities (with lot/batch tracking)
 - Search for items using natural language
 - List items by location or category
+- Find the oldest items in any location
+- Suggest recipes or uses based on what the user has
 
 When users describe items naturally, extract the relevant details. For example:
 - "I put 3 bags of frozen chicken in the freezer" → add_item with name="frozen chicken bags",
@@ -172,6 +210,19 @@ When users describe items naturally, extract the relevant details. For example:
 - "Do I have any batteries?" → search_items with query="batteries"
 - "What's in the garage?" → list_items with location="Garage"
 - "I used 2 of the AA batteries" → first search, then remove_item with appropriate quantity
+- "What's the oldest stuff in my freezer?" → get_oldest_items with location="Freezer"
+
+IMPORTANT - Recipe and suggestion questions:
+When the user asks "What recipe should I make?", "What can I cook?", "What should I make for dinner?",
+or any similar question about recipes, meal planning, or suggestions based on their inventory:
+1. FIRST call list_items with NO filters to see everything they have
+2. THEN provide recipe suggestions based on the actual inventory
+Do NOT ask the user to list their items — you can look them up yourself!
+
+When removing items, if the item has multiple batches/lots added at different times,
+mention the batch dates so the user knows which ones they're removing (e.g., "You have
+3 from Jan 5 and 2 from Feb 10"). If the user doesn't specify which batch, remove from
+the oldest first.
 
 Always be helpful and conversational. If you need more information to complete an action, ask the user.
 When reporting search or list results, summarize them naturally rather than just listing raw data.
