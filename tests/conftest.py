@@ -22,7 +22,7 @@ os.environ["POSTGRES_PORT"] = os.environ.get("POSTGRES_PORT", "5433")  # Use 543
 
 
 # Mock embedding that returns a fixed vector
-MOCK_EMBEDDING = [0.1] * 384  # 384-dimensional vector (same as all-MiniLM-L6-v2)
+MOCK_EMBEDDING = [0.1] * 1536  # 1536-dimensional vector (text-embedding-3-small)
 
 
 @pytest.fixture(autouse=True)

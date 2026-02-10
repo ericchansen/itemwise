@@ -7,8 +7,8 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-# Embedding dimension for sentence-transformers all-MiniLM-L6-v2 model
-EMBEDDING_DIMENSION = 384
+# Embedding dimension for Azure OpenAI text-embedding-ada-002 model
+EMBEDDING_DIMENSION = 1536
 
 
 class Base(DeclarativeBase):

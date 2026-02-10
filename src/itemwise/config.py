@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     # Application settings
     debug: bool = False
 
-    # Optional: OpenAI API key for embeddings
-    openai_api_key: str | None = None
+    # Azure OpenAI embedding deployment name
+    azure_openai_embedding_deployment: str = "text-embedding-3-small"
 
     @property
     def database_url(self) -> str:

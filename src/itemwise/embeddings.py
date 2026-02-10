@@ -1,46 +1,49 @@
-"""Embedding service for semantic search using sentence-transformers."""
+"""Embedding service for semantic search using Azure OpenAI."""
 
 import logging
 import os
-
-# IMPORTANT: Set offline mode BEFORE any huggingface imports
-# This prevents slow network calls to check for model updates
-os.environ["HF_HUB_OFFLINE"] = "1"
-os.environ["TRANSFORMERS_OFFLINE"] = "1"
-
 from functools import lru_cache
-from typing import Optional
+
+from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+from openai import AzureOpenAI
 
 logger = logging.getLogger(__name__)
 
-# Model name - small, fast, and free
-MODEL_NAME = "all-MiniLM-L6-v2"
-EMBEDDING_DIMENSION = 384
+MODEL_NAME = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small")
+EMBEDDING_DIMENSION = 1536
 
-# Lazy-loaded model instance
-_model: Optional["SentenceTransformer"] = None  # noqa: F821 - lazy import for startup performance
+# Lazy-loaded client
+_client: AzureOpenAI | None = None
+_configured: bool | None = None
 
 
-def _get_model() -> "SentenceTransformer":  # noqa: F821 - lazy import for startup performance
-    """Get or initialize the sentence transformer model (lazy loading)."""
-    global _model
-    if _model is None:
-        logger.info(f"Loading embedding model: {MODEL_NAME}")
-        from sentence_transformers import SentenceTransformer
+def _get_client() -> AzureOpenAI | None:
+    """Get or create the Azure OpenAI client for embeddings."""
+    global _client, _configured
+    if _configured is not None:
+        return _client
 
-        try:
-            _model = SentenceTransformer(MODEL_NAME)
-        except Exception as e:
-            # If offline mode fails (model not cached), try online
-            logger.warning(f"Offline load failed, trying online: {e}")
-            os.environ["HF_HUB_OFFLINE"] = "0"
-            os.environ["TRANSFORMERS_OFFLINE"] = "0"
-            _model = SentenceTransformer(MODEL_NAME)
-            # Restore offline mode for future loads
-            os.environ["HF_HUB_OFFLINE"] = "1"
-            os.environ["TRANSFORMERS_OFFLINE"] = "1"
-        logger.info("Embedding model loaded successfully")
-    return _model
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    if not endpoint:
+        logger.warning(
+            "AZURE_OPENAI_ENDPOINT not set — embeddings will return zero vectors"
+        )
+        _configured = False
+        return None
+
+    credential = DefaultAzureCredential()
+    token_provider = get_bearer_token_provider(
+        credential, "https://cognitiveservices.azure.com/.default"
+    )
+
+    _client = AzureOpenAI(
+        azure_endpoint=endpoint,
+        azure_ad_token_provider=token_provider,
+        api_version="2024-10-21",
+    )
+    _configured = True
+    logger.info(f"Initialized Azure OpenAI embedding client for {endpoint}")
+    return _client
 
 
 def generate_embedding(text: str) -> list[float]:
@@ -50,14 +53,17 @@ def generate_embedding(text: str) -> list[float]:
         text: Text to generate embedding for
 
     Returns:
-        List of floats representing the embedding vector (384 dimensions)
+        List of floats representing the embedding vector (1536 dimensions)
     """
     if not text or not text.strip():
         raise ValueError("Cannot generate embedding for empty text")
 
-    model = _get_model()
-    embedding = model.encode(text, convert_to_numpy=True)
-    return embedding.tolist()
+    client = _get_client()
+    if client is None:
+        return [0.0] * EMBEDDING_DIMENSION
+
+    response = client.embeddings.create(input=text, model=MODEL_NAME)
+    return response.data[0].embedding
 
 
 def generate_embeddings(texts: list[str]) -> list[list[float]]:
@@ -72,9 +78,12 @@ def generate_embeddings(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
 
-    model = _get_model()
-    embeddings = model.encode(texts, convert_to_numpy=True)
-    return [emb.tolist() for emb in embeddings]
+    client = _get_client()
+    if client is None:
+        return [[0.0] * EMBEDDING_DIMENSION for _ in texts]
+
+    response = client.embeddings.create(input=texts, model=MODEL_NAME)
+    return [item.embedding for item in response.data]
 
 
 @lru_cache(maxsize=1000)
