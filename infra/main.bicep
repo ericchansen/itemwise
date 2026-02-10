@@ -13,7 +13,7 @@ param location string
 param azureOpenAiEndpoint string = ''
 
 @description('Azure OpenAI deployment name')
-param azureOpenAiDeployment string = 'gpt-5-nano'
+param azureOpenAiDeployment string = 'gpt-4o-mini'
 
 @description('PostgreSQL administrator password')
 @secure()

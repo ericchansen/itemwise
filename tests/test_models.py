@@ -40,7 +40,7 @@ class TestInventoryItem:
         self, db_session: AsyncSession, test_user: User
     ) -> None:
         """Test creating an item with vector embedding."""
-        embedding = [0.1] * 384  # 384-dimensional vector (all-MiniLM-L6-v2)
+        embedding = [0.1] * 1536  # 1536-dimensional vector (text-embedding-3-small)
 
         item = InventoryItem(
             name="Test Item",
@@ -55,7 +55,7 @@ class TestInventoryItem:
         await db_session.refresh(item)
 
         assert item.embedding is not None
-        assert len(item.embedding) == 384
+        assert len(item.embedding) == 1536
 
     @pytest.mark.asyncio
     async def test_inventory_item_optional_fields(

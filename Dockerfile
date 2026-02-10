@@ -10,13 +10,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY pyproject.toml uv.lock ./
 
 # Install dependencies (excluding dev)
-# Use CPU-only torch to reduce image size significantly
-ENV PIP_EXTRA_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN uv sync --frozen --no-dev --no-install-project
-
-# Pre-download embedding model during build so container works offline
-ENV HF_HOME=/model-cache
-RUN .venv/bin/python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 # Production stage
 FROM python:3.12-slim
@@ -31,9 +25,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
 
-# Copy pre-cached embedding model from builder
-COPY --from=builder /model-cache /root/.cache/huggingface
-
 # Copy application code
 COPY src/ ./src/
 COPY alembic/ ./alembic/
@@ -44,9 +35,6 @@ COPY frontend/ ./frontend/
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app/src"
 ENV PYTHONUNBUFFERED=1
-ENV HF_HUB_OFFLINE=1
-ENV TRANSFORMERS_OFFLINE=1
-
 # Expose port
 EXPOSE 8080
 

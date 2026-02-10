@@ -40,7 +40,7 @@ class TestCreateItem:
     @pytest.mark.asyncio
     async def test_create_item_with_embedding(self, db_session: AsyncSession, test_user: User) -> None:
         """Test creating an item with vector embedding."""
-        embedding = [0.5] * 384  # 384-dimensional (all-MiniLM-L6-v2)
+        embedding = [0.5] * 1536  # 1536-dimensional (text-embedding-3-small)
 
         item = await create_item(
             db_session,
@@ -52,7 +52,7 @@ class TestCreateItem:
         )
 
         assert item.embedding is not None
-        assert len(item.embedding) == 384
+        assert len(item.embedding) == 1536
 
     @pytest.mark.asyncio
     async def test_create_item_minimal(self, db_session: AsyncSession, test_user: User) -> None:
@@ -196,8 +196,8 @@ class TestUpdateItem:
         """Test updating an item's embedding."""
         item = await create_item(db_session, user_id=test_user.id, **sample_item_data)
 
-        # Use correct dimension size (384 for all-MiniLM-L6-v2)
-        new_embedding = [0.1] * 384
+        # Use correct dimension size (1536 for text-embedding-3-small)
+        new_embedding = [0.1] * 1536
         updated = await update_item(db_session, test_user.id, item.id, embedding=new_embedding)
 
         # Compare list elements instead of using == on arrays
@@ -278,13 +278,13 @@ class TestSearchItems:
     @pytest.mark.asyncio
     async def test_search_by_embedding(self, db_session: AsyncSession, test_user: User) -> None:
         """Test vector similarity search."""
-        embedding1 = [1.0] * 384  # 384-dimensional (all-MiniLM-L6-v2)
-        embedding2 = [0.5] * 384
+        embedding1 = [1.0] * 1536  # 1536-dimensional (text-embedding-3-small)
+        embedding2 = [0.5] * 1536
 
         await create_item(db_session, test_user.id, "Item 1", 1, "test", embedding=embedding1)
         await create_item(db_session, test_user.id, "Item 2", 2, "test", embedding=embedding2)
 
-        query_embedding = [0.9] * 384
+        query_embedding = [0.9] * 1536
         results = await search_items_by_embedding(db_session, test_user.id, query_embedding)
 
         assert len(results) == 2
