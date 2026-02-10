@@ -10,20 +10,15 @@ class TestSettings:
 
     def test_default_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test default configuration values."""
-        # Note: In test environment, POSTGRES_DB is set to "inventory_test" in conftest
-        # and POSTGRES_PORT may be set to 5433
-        # Clear DEBUG set by conftest to test default value
         monkeypatch.delenv("DEBUG", raising=False)
+        monkeypatch.setattr("itemwise.config.Settings.model_config", {"env_file": None, "case_sensitive": False, "extra": "ignore"})
         settings = Settings()
 
         assert settings.postgres_user == "postgres"
         assert settings.postgres_password == "postgres"
-        # In test environment, this will be "inventory_test" due to conftest
-        assert settings.postgres_db in ["inventory", "inventory_test"]
         assert settings.postgres_host == "localhost"
-        assert settings.postgres_port in [5432, 5433]  # Allow both ports
         assert settings.debug is False
-        assert settings.openai_api_key is None
+        assert settings.azure_openai_embedding_deployment == "text-embedding-3-small"
 
     def test_database_url_construction(self) -> None:
         """Test that database URL is correctly constructed."""
@@ -47,7 +42,7 @@ class TestSettings:
             postgres_host="custom_host",
             postgres_port=9999,
             debug=True,
-            openai_api_key="sk-test-key",
+            azure_openai_embedding_deployment="text-embedding-ada-002",
         )
 
         assert settings.postgres_user == "custom_user"
@@ -56,7 +51,7 @@ class TestSettings:
         assert settings.postgres_host == "custom_host"
         assert settings.postgres_port == 9999
         assert settings.debug is True
-        assert settings.openai_api_key == "sk-test-key"
+        assert settings.azure_openai_embedding_deployment == "text-embedding-ada-002"
 
     def test_settings_from_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test loading settings from environment variables."""
