@@ -9,7 +9,7 @@ Built with FastMCP to enable AI agents like Claude to manage your inventory, plu
 - 🏠 **Multi-Location Support** - Track items in any location: freezer, garage, closet, tool shed, etc.
 - 🤖 **MCP Server Integration** - Expose inventory operations to AI agents via Model Context Protocol
 - 🧠 **Azure OpenAI Powered** - Natural language chat that understands "I put 3 bags of chicken in the freezer"
-- 🔍 **Semantic Search** - Natural language search powered by local embeddings (sentence-transformers) and pgvector
+- 🔍 **Semantic Search** - Natural language search powered by Azure OpenAI embeddings and pgvector
 - 🌐 **Web Interface** - Responsive chat UI that works on desktop and mobile
 - 📝 **Complete Audit Trail** - All operations logged for tracking
 - 🗄️ **PostgreSQL Backend** - Robust database with vector extension for semantic capabilities
@@ -201,9 +201,10 @@ ENV=production  # or 'development'
 #   python -c "import secrets; print(secrets.token_urlsafe(32))"
 SECRET_KEY=your-secure-random-key-here
 
-# Azure OpenAI (optional - enables intelligent chat)
+# Azure OpenAI (optional - enables intelligent chat + semantic search)
 AZURE_OPENAI_ENDPOINT=https://your-resource.cognitiveservices.azure.com/
 AZURE_OPENAI_DEPLOYMENT=gpt-4o-mini
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
 ```
 
 ### Security Note

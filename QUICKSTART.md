@@ -1,136 +1,117 @@
 # Quick Start Guide
 
-## ✅ System Status
+Get Itemwise running locally in under 5 minutes.
 
-All components are now set up and working:
+## Prerequisites
 
-- ✅ PostgreSQL database with pgvector running
-- ✅ Database tables created (inventory_items, transaction_log)
-- ✅ Test data added successfully
-- ✅ FastMCP server ready
+- [uv](https://docs.astral.sh/uv/) (Python package manager)
+- [Docker](https://www.docker.com/) (for PostgreSQL + pgvector)
+- [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) (optional, for Azure OpenAI features)
 
-## Next Steps: Connect to Claude Desktop
+## 1. Install Dependencies
 
-### 1. Find Your Claude Desktop Config
-
-**Windows:**
-```
-%APPDATA%\Claude\claude_desktop_config.json
+```bash
+git clone https://github.com/ericchansen/itemwise.git
+cd itemwise
+uv sync
 ```
 
-**macOS:**
-```
-~/Library/Application Support/Claude/claude_desktop_config.json
+## 2. Configure Environment
+
+```bash
+cp .env.example .env
 ```
 
-### 2. Add This Configuration
+Edit `.env` if you want to enable Azure OpenAI (chat + semantic search):
 
-Open the config file and add:
+```env
+AZURE_OPENAI_ENDPOINT=https://your-resource.cognitiveservices.azure.com/
+AZURE_OPENAI_DEPLOYMENT=gpt-4o-mini
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
+```
+
+Then authenticate:
+```bash
+az login
+```
+
+> **Without Azure OpenAI**, the app still works — chat uses basic pattern matching and search uses exact matching instead of semantic vectors.
+
+## 3. Start the Database
+
+```bash
+docker compose up -d
+```
+
+Wait for it to be healthy:
+```bash
+docker compose ps   # Should show "healthy"
+```
+
+## 4. Run Migrations
+
+```bash
+uv run alembic upgrade head
+```
+
+## 5. Start the App
+
+**Web UI** (recommended):
+```bash
+uv run itemwise-web
+# Open http://localhost:8000
+```
+
+**MCP Server** (for Claude Desktop / AI agents):
+```bash
+uv run itemwise-server
+```
+
+## Connect to Claude Desktop
+
+Add to your Claude Desktop config:
+
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "itemwise": {
       "command": "uv",
-      "args": ["--directory", "C:\\Users\\erichansen\\repos\\itemwise", "run", "itemwise-server"],
-      "env": {
-        "POSTGRES_HOST": "localhost",
-        "POSTGRES_PORT": "5432",
-        "POSTGRES_USER": "postgres",
-        "POSTGRES_PASSWORD": "postgres",
-        "POSTGRES_DB": "inventory"
-      }
+      "args": ["--directory", "/path/to/itemwise", "run", "itemwise-server"]
     }
   }
 }
 ```
 
-**Important:** Update the path `C:\\Users\\erichansen\\repos\\itemwise` if your project is in a different location.
+Update the path to your clone location, then restart Claude Desktop.
 
-### 3. Restart Claude Desktop
+## Try It Out
 
-Close and reopen Claude Desktop completely.
+In the web UI chat or Claude Desktop:
 
-### 4. Test It Out!
-
-Try these prompts in Claude:
-
-```
-"What's in my freezer inventory?"
-```
-
-```
-"Add 3 packages of ground beef to my freezer"
-```
-
-```
-"Do I have any chicken?"
-```
-
-```
-"Show me all my vegetables"
-```
-
-## Available MCP Tools
-
-Claude will have access to these tools:
-
-- **add_item** - Add new items to inventory
-- **update_item_tool** - Update existing items
-- **remove_item** - Remove items
-- **list_inventory** - List all items or filter by category
-- **search_inventory** - Natural language search
+- "I just bought 5 bags of frozen vegetables and put them in the freezer"
+- "I used 2 of the AA batteries from the garage"
+- "What meat do I have in the freezer?"
+- "Show me everything in the garage"
 
 ## Troubleshooting
 
-### MCP server not appearing
-1. Check the config file path is correct
-2. Verify the project directory path uses double backslashes `\\`
-3. Ensure database is running: `docker compose ps`
-4. Check Claude Desktop Developer Tools (Ctrl+Shift+I on Windows)
-
-### Database errors
-```bash
-# Restart database
-docker compose restart
-
-# Check database logs
-docker compose logs postgres
-```
-
-### Test the server manually
-```bash
-# This should start the server in stdio mode
-uv run itemwise-server
-```
-
-## Managing the Database
-
-### Stop database
-```bash
-docker compose down
-```
-
-### Start database
-```bash
-docker compose up -d
-```
+| Problem | Fix |
+|---------|-----|
+| Database won't start | `docker compose logs postgres` |
+| Import errors | `uv sync --reinstall` |
+| MCP not appearing in Claude | Check config path, restart Claude Desktop |
+| Chat returns generic responses | Set `AZURE_OPENAI_ENDPOINT` and run `az login` |
 
 ### View database directly
+
 ```bash
 docker exec -it itemwise-db psql -U postgres -d inventory
 ```
 
-Then run SQL:
 ```sql
-SELECT * FROM inventory_items;
-SELECT * FROM transaction_log;
+SELECT name, quantity, category, location_name FROM inventory_items LIMIT 10;
+SELECT name FROM locations;
 ```
-
-## Current Inventory
-
-You already have 2 test items:
-- Chicken Breast: 5 (meat)
-- Frozen Peas: 3 (vegetables)
-
-Enjoy your AI-powered freezer inventory system! 🎉
