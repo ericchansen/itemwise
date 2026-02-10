@@ -102,6 +102,11 @@ class UserRegister(BaseModel):
     password: str = Field(..., min_length=8, description="User's password (min 8 characters)")
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=8)
+
+
 class ChatMessage(BaseModel):
     message: str = Field(..., description="User's natural language message")
 
@@ -307,6 +312,27 @@ async def get_current_user_info(
         "user_id": current_user.user_id,
         "email": current_user.email,
     }
+
+
+@app.put("/api/auth/password")
+async def change_password(
+    body: ChangePasswordRequest,
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+):
+    """Change the authenticated user's password."""
+    async with AsyncSessionLocal() as session:
+        user = await get_user_by_email(session, current_user.email)
+        if not user or not verify_password(body.current_password, user.hashed_password):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+        is_valid, error_msg = validate_password(body.new_password)
+        if not is_valid:
+            raise HTTPException(status_code=400, detail=error_msg)
+
+        user.hashed_password = hash_password(body.new_password)
+        await session.commit()
+
+    return {"message": "Password updated successfully"}
 
 
 # ===== Item Endpoints =====

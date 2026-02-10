@@ -260,19 +260,24 @@ async def process_chat_with_tools(
         {"role": "user", "content": message},
     ]
 
-    # Initial request with tools
-    response = client.chat.completions.create(
-        model=deployment,
-        messages=messages,
-        tools=INVENTORY_TOOLS,
-        tool_choice="auto",
-    )
+    max_iterations = 5
+    tools_called = False
+    for _iteration in range(max_iterations):
+        response = client.chat.completions.create(
+            model=deployment,
+            messages=messages,
+            tools=INVENTORY_TOOLS,
+            tool_choice="auto",
+        )
 
-    assistant_message = response.choices[0].message
+        assistant_message = response.choices[0].message
 
-    # Check if the model wants to call tools
-    if assistant_message.tool_calls:
+        if not assistant_message.tool_calls:
+            fallback = "Done." if tools_called else "I'm not sure how to help with that."
+            return assistant_message.content or fallback
+
         # Add assistant message to history
+        tools_called = True
         messages.append(assistant_message)
 
         # Process each tool call
@@ -302,15 +307,12 @@ async def process_chat_with_tools(
                 }
             )
 
-        # Get final response after tool execution
-        final_response = client.chat.completions.create(
-            model=deployment,
-            messages=messages,
-        )
-        return final_response.choices[0].message.content or "Done."
-
-    # No tool calls, return direct response
-    return assistant_message.content or "I'm not sure how to help with that."
+    # Safety: hit max iterations, get a final text response
+    final_response = client.chat.completions.create(
+        model=deployment,
+        messages=messages,
+    )
+    return final_response.choices[0].message.content or "Done."
 
 
 def generate_display_name(raw_name: str) -> str:
