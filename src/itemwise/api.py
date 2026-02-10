@@ -777,11 +777,15 @@ async def _chat_with_ai(user_message: str, user_id: int) -> ChatResponse:
         return ChatResponse(response=response_text, action="ai_response")
     except Exception as e:
         logger.exception("AI chat error")
-        return ChatResponse(
-            response=f"I had trouble processing that request. Error: {str(e)}. "
-            "Try rephrasing or use the manual interface.",
-            action="error",
-        )
+        error_str = str(e)
+        if "DefaultAzureCredential" in error_str or "authentication" in error_str.lower():
+            user_msg = (
+                "Azure OpenAI is not reachable — the server may need to be "
+                "configured with valid Azure credentials. Check the logs for details."
+            )
+        else:
+            user_msg = "I had trouble processing that request. Try rephrasing or use the manual interface."
+        return ChatResponse(response=user_msg, action="error")
 
 
 async def _chat_fallback(user_message: str, user_id: int) -> ChatResponse:

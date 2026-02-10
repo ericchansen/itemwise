@@ -44,16 +44,33 @@
     <header class="border-b border-border sticky top-0 z-10 bg-bg/90 backdrop-blur-sm">
         <div class="max-w-2xl mx-auto px-6 py-4 flex items-center justify-between">
             <h1 class="text-lg font-medium tracking-tight">inventory</h1>
-            <div class="flex gap-1 bg-surface rounded-lg p-1">
-                <button onclick="showTab('chat')" id="tab-chat" class="tab-btn px-4 py-1.5 rounded-md text-sm transition-all bg-white/10 text-white">
-                    chat
-                </button>
-                <button onclick="showTab('inventory')" id="tab-inventory" class="tab-btn px-4 py-1.5 rounded-md text-sm transition-all text-muted hover:text-white">
-                    items
-                </button>
+            <div class="flex items-center gap-3">
+                <div id="app-tabs" class="hidden">
+                    <div class="flex gap-1 bg-surface rounded-lg p-1">
+                        <button onclick="showTab('chat')" id="tab-chat" class="tab-btn px-4 py-1.5 rounded-md text-sm transition-all bg-white/10 text-white">chat</button>
+                        <button onclick="showTab('inventory')" id="tab-inventory" class="tab-btn px-4 py-1.5 rounded-md text-sm transition-all text-muted hover:text-white">items</button>
+                    </div>
+                </div>
+                <button id="logout-btn" onclick="logout()" class="hidden px-3 py-1.5 text-sm text-muted hover:text-white transition-colors">logout</button>
             </div>
         </div>
     </header>
+
+    <!-- Auth Screen -->
+    <div id="auth-screen" class="max-w-sm mx-auto px-6 py-20">
+        <div class="bg-surface border border-border rounded-2xl p-6">
+            <div class="flex gap-1 bg-card rounded-lg p-1 mb-6">
+                <button onclick="showAuthTab('login')" id="auth-tab-login" class="flex-1 py-2 rounded-md text-sm transition-all bg-white/10 text-white">Login</button>
+                <button onclick="showAuthTab('register')" id="auth-tab-register" class="flex-1 py-2 rounded-md text-sm transition-all text-muted">Register</button>
+            </div>
+            <div id="auth-error" class="hidden mb-4 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm"></div>
+            <form onsubmit="handleAuth(event)" class="space-y-4">
+                <input type="email" id="auth-email" required placeholder="Email" class="w-full px-4 py-2.5 bg-card border border-border rounded-lg text-white placeholder-muted">
+                <input type="password" id="auth-password" required placeholder="Password" minlength="8" class="w-full px-4 py-2.5 bg-card border border-border rounded-lg text-white placeholder-muted">
+                <button type="submit" id="auth-submit" class="w-full px-4 py-2.5 bg-accent text-white rounded-lg font-medium hover:bg-accent/90 transition-all">Login</button>
+            </form>
+        </div>
+    </div>
 
     <!-- Main -->
     <main class="max-w-2xl mx-auto px-6 py-6">
@@ -168,6 +185,121 @@
     <script>
         const API_URL = window.location.origin;
         let searchTimeout;
+        let authMode = 'login';
+
+        // ===== Auth =====
+        function getToken() { return localStorage.getItem('token'); }
+        function getRefreshToken() { return localStorage.getItem('refreshToken'); }
+        function authHeaders() {
+            const t = getToken();
+            return t ? { 'Authorization': `Bearer ${t}` } : {};
+        }
+
+        async function authFetch(url, opts = {}) {
+            opts.headers = { ...opts.headers, ...authHeaders() };
+            let res = await fetch(url, opts);
+            if (res.status === 401 && getRefreshToken()) {
+                const refreshed = await tryRefresh();
+                if (refreshed) {
+                    opts.headers = { ...opts.headers, ...authHeaders() };
+                    res = await fetch(url, opts);
+                } else { logout(); }
+            }
+            if (res.status === 401) { logout(); throw new Error('Unauthorized'); }
+            return res;
+        }
+
+        async function tryRefresh() {
+            try {
+                const res = await fetch(`${API_URL}/api/auth/refresh`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ refresh_token: getRefreshToken() })
+                });
+                if (!res.ok) return false;
+                const data = await res.json();
+                localStorage.setItem('token', data.access_token);
+                return true;
+            } catch { return false; }
+        }
+
+        function showAuthTab(tab) {
+            authMode = tab;
+            document.getElementById('auth-tab-login').classList.toggle('bg-white/10', tab === 'login');
+            document.getElementById('auth-tab-login').classList.toggle('text-white', tab === 'login');
+            document.getElementById('auth-tab-login').classList.toggle('text-muted', tab !== 'login');
+            document.getElementById('auth-tab-register').classList.toggle('bg-white/10', tab === 'register');
+            document.getElementById('auth-tab-register').classList.toggle('text-white', tab === 'register');
+            document.getElementById('auth-tab-register').classList.toggle('text-muted', tab !== 'register');
+            document.getElementById('auth-submit').textContent = tab === 'login' ? 'Login' : 'Register';
+            document.getElementById('auth-error').classList.add('hidden');
+        }
+
+        async function handleAuth(e) {
+            e.preventDefault();
+            const email = document.getElementById('auth-email').value;
+            const password = document.getElementById('auth-password').value;
+            const errorEl = document.getElementById('auth-error');
+            errorEl.classList.add('hidden');
+
+            try {
+                let res;
+                if (authMode === 'register') {
+                    res = await fetch(`${API_URL}/api/auth/register`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email, password })
+                    });
+                } else {
+                    const formData = new URLSearchParams();
+                    formData.append('username', email);
+                    formData.append('password', password);
+                    res = await fetch(`${API_URL}/api/auth/login`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                        body: formData
+                    });
+                }
+
+                if (!res.ok) {
+                    const err = await res.json();
+                    errorEl.textContent = err.detail || 'Authentication failed';
+                    errorEl.classList.remove('hidden');
+                    return;
+                }
+
+                const data = await res.json();
+                localStorage.setItem('token', data.access_token);
+                localStorage.setItem('refreshToken', data.refresh_token);
+                showApp();
+            } catch {
+                errorEl.textContent = 'Connection error';
+                errorEl.classList.remove('hidden');
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('refreshToken');
+            showAuthScreen();
+        }
+
+        function showApp() {
+            document.getElementById('auth-screen').classList.add('hidden');
+            document.getElementById('app-tabs').classList.remove('hidden');
+            document.getElementById('logout-btn').classList.remove('hidden');
+            document.querySelectorAll('main').forEach(el => el.classList.remove('hidden'));
+        }
+
+        function showAuthScreen() {
+            document.getElementById('auth-screen').classList.remove('hidden');
+            document.getElementById('app-tabs').classList.add('hidden');
+            document.getElementById('logout-btn').classList.add('hidden');
+            document.querySelectorAll('main').forEach(el => el.classList.add('hidden'));
+        }
+
+        // ===== Init =====
+        if (getToken()) { showApp(); } else { showAuthScreen(); }
 
         function showTab(tab) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
@@ -196,7 +328,7 @@
             addMessage(text, true);
             document.getElementById('chat-input').value = '';
             try {
-                const res = await fetch(`${API_URL}/api/chat`, {
+                const res = await authFetch(`${API_URL}/api/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: text })
@@ -204,7 +336,7 @@
                 const data = await res.json();
                 addMessage(data.response.replace(/\n/g, '<br>'));
             } catch (e) {
-                addMessage('Connection error. Try again.');
+                if (e.message !== 'Unauthorized') addMessage('Connection error. Try again.');
             }
         }
 
@@ -220,7 +352,7 @@
             if (location) url += `${search ? '&' : ''}location=${encodeURIComponent(location)}`;
             
             try {
-                const res = await fetch(url);
+                const res = await authFetch(url);
                 const data = await res.json();
                 const items = data.items || data.results || [];
                 const list = document.getElementById('items-list');
@@ -248,7 +380,7 @@
 
         async function loadLocations() {
             try {
-                const res = await fetch(`${API_URL}/api/locations`);
+                const res = await authFetch(`${API_URL}/api/locations`);
                 const data = await res.json();
                 const select = document.getElementById('location-filter');
                 const val = select.value;
@@ -287,7 +419,7 @@
                 description: document.getElementById('item-description').value || null
             };
             try {
-                const res = await fetch(`${API_URL}/api/items`, {
+                const res = await authFetch(`${API_URL}/api/items`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(item)
@@ -299,7 +431,7 @@
         async function deleteItem(id) {
             if (!confirm('Delete this item?')) return;
             try {
-                const res = await fetch(`${API_URL}/api/items/${id}`, { method: 'DELETE' });
+                const res = await authFetch(`${API_URL}/api/items/${id}`, { method: 'DELETE' });
                 if (res.ok) loadInventory();
             } catch (e) {}
         }

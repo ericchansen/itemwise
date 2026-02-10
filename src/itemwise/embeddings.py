@@ -31,16 +31,23 @@ def _get_client() -> AzureOpenAI | None:
         _configured = False
         return None
 
-    credential = DefaultAzureCredential()
-    token_provider = get_bearer_token_provider(
-        credential, "https://cognitiveservices.azure.com/.default"
-    )
-
-    _client = AzureOpenAI(
-        azure_endpoint=endpoint,
-        azure_ad_token_provider=token_provider,
-        api_version="2024-10-21",
-    )
+    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    if api_key:
+        _client = AzureOpenAI(
+            azure_endpoint=endpoint,
+            api_key=api_key,
+            api_version="2024-10-21",
+        )
+    else:
+        credential = DefaultAzureCredential()
+        token_provider = get_bearer_token_provider(
+            credential, "https://cognitiveservices.azure.com/.default"
+        )
+        _client = AzureOpenAI(
+            azure_endpoint=endpoint,
+            azure_ad_token_provider=token_provider,
+            api_version="2024-10-21",
+        )
     _configured = True
     logger.info(f"Initialized Azure OpenAI embedding client for {endpoint}")
     return _client
