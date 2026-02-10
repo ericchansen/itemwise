@@ -1,8 +1,8 @@
 param location string
 param tags object
 param resourceToken string
-param azureOpenAiEndpoint string
 param azureOpenAiDeployment string
+param azureOpenAiEmbeddingDeployment string
 
 @secure()
 param postgresPassword string
@@ -46,6 +46,54 @@ resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' =
   }
 }
 
+// Azure OpenAI
+resource openAi 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
+  name: 'oai-${resourceToken}'
+  location: location
+  tags: tags
+  kind: 'OpenAI'
+  sku: {
+    name: 'S0'
+  }
+  properties: {
+    customSubDomainName: 'oai-${resourceToken}'
+    publicNetworkAccess: 'Enabled'
+  }
+}
+
+resource chatDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
+  parent: openAi
+  name: azureOpenAiDeployment
+  sku: {
+    name: 'GlobalStandard'
+    capacity: 10
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: 'gpt-4o-mini'
+      version: '2024-07-18'
+    }
+  }
+}
+
+resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
+  parent: openAi
+  name: azureOpenAiEmbeddingDeployment
+  sku: {
+    name: 'GlobalStandard'
+    capacity: 10
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: 'text-embedding-3-small'
+      version: '1'
+    }
+  }
+  dependsOn: [chatDeployment]
+}
+
 // User Assigned Managed Identity
 resource managedIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
   name: 'id-${resourceToken}'
@@ -61,6 +109,17 @@ resource acrPullRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-
     principalId: managedIdentity.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+  }
+}
+
+// Cognitive Services OpenAI User role for Managed Identity
+resource openAiRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(openAi.id, managedIdentity.id, '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
+  scope: openAi
+  properties: {
+    principalId: managedIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
   }
 }
 
@@ -178,6 +237,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'appinsights-connection-string'
           value: appInsights.properties.ConnectionString
         }
+        {
+          name: 'jwt-secret'
+          value: uniqueString(resourceToken, 'jwt-secret', postgresPassword)
+        }
       ]
     }
     template: {
@@ -217,23 +280,27 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'AZURE_OPENAI_ENDPOINT'
-              value: azureOpenAiEndpoint
+              value: openAi.properties.endpoint
             }
             {
               name: 'AZURE_OPENAI_DEPLOYMENT'
               value: azureOpenAiDeployment
             }
             {
+              name: 'AZURE_OPENAI_EMBEDDING_DEPLOYMENT'
+              value: azureOpenAiEmbeddingDeployment
+            }
+            {
+              name: 'AZURE_CLIENT_ID'
+              value: managedIdentity.properties.clientId
+            }
+            {
+              name: 'JWT_SECRET_KEY'
+              secretRef: 'jwt-secret'
+            }
+            {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
               secretRef: 'appinsights-connection-string'
-            }
-            {
-              name: 'HF_HUB_OFFLINE'
-              value: '1'
-            }
-            {
-              name: 'TRANSFORMERS_OFFLINE'
-              value: '1'
             }
           ]
         }
@@ -267,3 +334,4 @@ output postgresHost string = postgresServer.properties.fullyQualifiedDomainName
 output postgresDatabase string = postgresDatabase.name
 output logAnalyticsWorkspaceId string = logAnalytics.id
 output appInsightsConnectionString string = appInsights.properties.ConnectionString
+output azureOpenAiEndpoint string = openAi.properties.endpoint

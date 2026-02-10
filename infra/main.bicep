@@ -5,15 +5,14 @@ targetScope = 'subscription'
 @description('Name of the environment (e.g., dev, staging, prod)')
 param environmentName string
 
-@minLength(1)
 @description('Primary location for all resources')
-param location string
+param location string = ''
 
-@description('Azure OpenAI endpoint URL')
-param azureOpenAiEndpoint string = ''
-
-@description('Azure OpenAI deployment name')
+@description('Azure OpenAI chat deployment name')
 param azureOpenAiDeployment string = 'gpt-4o-mini'
+
+@description('Azure OpenAI embedding deployment name')
+param azureOpenAiEmbeddingDeployment string = 'text-embedding-3-small'
 
 @description('PostgreSQL administrator password')
 @secure()
@@ -40,8 +39,8 @@ module resources './resources.bicep' = {
     location: location
     tags: tags
     resourceToken: resourceToken
-    azureOpenAiEndpoint: azureOpenAiEndpoint
     azureOpenAiDeployment: azureOpenAiDeployment
+    azureOpenAiEmbeddingDeployment: azureOpenAiEmbeddingDeployment
     postgresPassword: postgresPassword
   }
 }
@@ -54,3 +53,4 @@ output AZURE_CONTAINER_REGISTRY_NAME string = resources.outputs.containerRegistr
 output SERVICE_API_ENDPOINT string = resources.outputs.apiEndpoint
 output POSTGRES_HOST string = resources.outputs.postgresHost
 output POSTGRES_DATABASE string = resources.outputs.postgresDatabase
+output AZURE_OPENAI_ENDPOINT string = resources.outputs.azureOpenAiEndpoint
