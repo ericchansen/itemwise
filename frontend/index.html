@@ -466,7 +466,7 @@
                     `<option value="${inv.id}" ${inv.id === activeInventoryId ? 'selected' : ''}>${inv.name}</option>`
                 ).join('');
                 if (!activeInventoryId && data.inventories.length > 0) {
-                    activeInventoryId = data.inventories[0].id;
+                    activeInventoryId = parseInt(data.inventories[0].id);
                 }
                 document.getElementById('inventory-selector-row').classList.remove('hidden');
             } catch (e) { console.error('Failed to load inventories', e); }
@@ -540,6 +540,12 @@
             e.preventDefault();
             const email = document.getElementById('member-email').value;
             const fb = document.getElementById('member-feedback');
+            if (!activeInventoryId) {
+                fb.textContent = 'No inventory selected';
+                fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
+                fb.classList.remove('hidden');
+                return;
+            }
             try {
                 const res = await authFetch(`${API_URL}/api/inventories/${activeInventoryId}/members`, {
                     method: 'POST',
