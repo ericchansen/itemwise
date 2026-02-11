@@ -36,7 +36,7 @@ Wait for deployment to complete successfully.
 
 ### 6. Run E2E Tests Against Azure
 ```powershell
-$env:E2E_BASE_URL = "https://ca-api-3khszorklkmli.proudsky-340e94b3.centralus.azurecontainerapps.io"
+$env:E2E_BASE_URL = "https://ca-api-ki7zeahtw2lr6.proudwater-caeb734c.centralus.azurecontainerapps.io"
 uv run python -m pytest tests/test_e2e.py -v -m e2e --no-cov
 ```
 All E2E tests must pass against Azure.
@@ -75,7 +75,7 @@ Open the app in the browser (both local and Azure URLs) and interact with it:
 | **Linter** | `ruff` |
 | **Test DB** | Docker PostgreSQL on port 5433, DB name: `inventory` |
 | **App** | Docker on port 8080 |
-| **Azure URL** | `https://ca-api-3khszorklkmli.proudsky-340e94b3.centralus.azurecontainerapps.io` |
+| **Azure URL** | `https://ca-api-ki7zeahtw2lr6.proudwater-caeb734c.centralus.azurecontainerapps.io` |
 | **Azure region** | centralus |
 | **Deploy command** | `azd deploy` |
 

@@ -6,7 +6,7 @@ targetScope = 'subscription'
 param environmentName string
 
 @description('Primary location for all resources')
-param location string = ''
+param location string
 
 @description('Azure OpenAI chat deployment name')
 param azureOpenAiDeployment string = 'gpt-4o-mini'
