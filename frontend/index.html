@@ -325,6 +325,17 @@
         function logout() {
             localStorage.removeItem('token');
             localStorage.removeItem('refreshToken');
+            activeInventoryId = null;
+            // Clear DOM state
+            document.getElementById('chat-messages').innerHTML = '';
+            document.getElementById('inventory-selector').innerHTML = '';
+            document.getElementById('inventory-selector-row').classList.add('hidden');
+            const itemsList = document.getElementById('items-list');
+            if (itemsList) itemsList.innerHTML = '';
+            const membersList = document.getElementById('members-list');
+            if (membersList) membersList.innerHTML = '';
+            const memberFeedback = document.getElementById('member-feedback');
+            if (memberFeedback) { memberFeedback.textContent = ''; memberFeedback.classList.add('hidden'); }
             showAuthScreen();
         }
 
@@ -340,6 +351,7 @@
             document.getElementById('auth-screen').classList.remove('hidden');
             document.getElementById('app-tabs').classList.add('hidden');
             document.getElementById('logout-btn').classList.add('hidden');
+            document.getElementById('inventory-selector-row').classList.add('hidden');
             document.querySelectorAll('main').forEach(el => el.classList.add('hidden'));
         }
 
@@ -502,7 +514,7 @@
                 } else {
                     const err = await res.json();
                     fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
-                    fb.textContent = err.detail || 'Failed to update password';
+                    fb.textContent = typeof err.detail === 'string' ? err.detail : Array.isArray(err.detail) ? err.detail.map(d => d.msg || JSON.stringify(d)).join(', ') : 'Failed to update password';
                 }
             } catch(e) {
                 fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
@@ -542,7 +554,7 @@
                     loadMembers();
                 } else {
                     const err = await res.json();
-                    fb.textContent = err.detail || 'Failed to add member';
+                    fb.textContent = typeof err.detail === 'string' ? err.detail : Array.isArray(err.detail) ? err.detail.map(d => d.msg || JSON.stringify(d)).join(', ') : 'Failed to add member';
                     fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
                     fb.classList.remove('hidden');
                 }

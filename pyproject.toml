@@ -23,6 +23,7 @@ dependencies = [
     "passlib>=1.7.4",
     "slowapi>=0.1.9",
     "bcrypt>=5.0.0",
+    "azure-monitor-opentelemetry>=1.6.0",
 ]
 
 [project.optional-dependencies]

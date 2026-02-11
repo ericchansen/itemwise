@@ -1,5 +1,15 @@
 """FastMCP server for inventory management."""
 
+import os
+
+# Azure Monitor telemetry (auto-instruments FastAPI, httpx, sqlalchemy, etc.)
+if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
+    try:
+        from azure.monitor.opentelemetry import configure_azure_monitor
+        configure_azure_monitor()
+    except ImportError:
+        pass
+
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
