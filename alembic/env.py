@@ -19,7 +19,7 @@ from itemwise.database.models import Base
 config = context.config
 
 # Set database URL from settings (use psycopg2 for migrations, not asyncpg)
-db_url = settings.database_url.replace("+asyncpg", "")
+db_url = settings.database_url.replace("+asyncpg", "").replace("?ssl=require", "?sslmode=require")
 config.set_main_option("sqlalchemy.url", db_url)
 
 # Interpret the config file for Python logging.

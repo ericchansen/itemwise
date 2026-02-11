@@ -30,6 +30,7 @@ COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
 COPY frontend/ ./frontend/
+COPY start.sh fix_migration.py ./
 
 # Set environment variables
 ENV PATH="/app/.venv/bin:$PATH"
@@ -42,5 +43,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD python -c "import httpx; r=httpx.get('http://localhost:8080/health', timeout=5); exit(0 if r.json().get('status')=='healthy' else 1)"
 
-# Run the application
-CMD ["python", "-m", "uvicorn", "itemwise.api:app", "--host", "0.0.0.0", "--port", "8080"]
+# Run migrations then start the application
+CMD ["sh", "start.sh"]
