@@ -42,10 +42,8 @@
 <body class="bg-bg text-white min-h-screen">
     <!-- Header -->
     <header class="border-b border-border sticky top-0 z-10 bg-bg/90 backdrop-blur-sm">
-        <div class="max-w-2xl mx-auto px-6 py-4 flex items-center justify-between">
+        <div class="max-w-2xl mx-auto px-6 py-3 flex items-center justify-between">
             <h1 class="text-lg font-medium tracking-tight">itemwise</h1>
-            <select id="inventory-selector" class="hidden px-3 py-1.5 bg-surface border border-border rounded-lg text-sm text-white" onchange="switchInventory()">
-            </select>
             <div class="flex items-center gap-3">
                 <div id="app-tabs" class="hidden">
                     <div class="flex gap-1 bg-surface rounded-lg p-1">
@@ -56,6 +54,10 @@
                 </div>
                 <button id="logout-btn" onclick="logout()" class="hidden px-3 py-1.5 text-sm text-muted hover:text-white transition-colors">logout</button>
             </div>
+        </div>
+        <div id="inventory-selector-row" class="hidden max-w-2xl mx-auto px-6 pb-2">
+            <select id="inventory-selector" class="w-full px-3 py-1.5 bg-surface border border-border rounded-lg text-sm text-muted" onchange="switchInventory()">
+            </select>
         </div>
     </header>
 
@@ -358,11 +360,19 @@
             if (tab === 'settings') { loadProfile(); loadMembers(); }
         }
 
+        function renderMarkdown(text) {
+            return text
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                .replace(/\n/g, '<br>');
+        }
+
         function addMessage(content, isUser = false) {
             const container = document.getElementById('chat-messages');
             const div = document.createElement('div');
             div.className = `message-enter ${isUser ? 'text-right' : ''}`;
-            div.innerHTML = `<div class="inline-block max-w-[85%] px-4 py-2.5 rounded-2xl ${isUser ? 'bg-accent text-white' : 'bg-card border border-border text-white/90'}">${content}</div>`;
+            const rendered = isUser ? content : renderMarkdown(content);
+            div.innerHTML = `<div class="inline-block max-w-[85%] px-4 py-2.5 rounded-2xl ${isUser ? 'bg-accent text-white' : 'bg-card border border-border text-white/90'}">${rendered}</div>`;
             container.appendChild(div);
             container.scrollTop = container.scrollHeight;
         }
@@ -446,7 +456,7 @@
                 if (!activeInventoryId && data.inventories.length > 0) {
                     activeInventoryId = data.inventories[0].id;
                 }
-                sel.classList.remove('hidden');
+                document.getElementById('inventory-selector-row').classList.remove('hidden');
             } catch (e) { console.error('Failed to load inventories', e); }
         }
 

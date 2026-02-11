@@ -477,7 +477,7 @@ async def list_items(
 
     if location_name:
         normalized = normalize_location_name(location_name)
-        query = query.join(Location).where(Location.normalized_name == normalized)
+        query = query.join(Location).where(Location.normalized_name.contains(normalized))
 
     query = query.order_by(InventoryItem.created_at.desc()).limit(limit)
 
@@ -596,7 +596,7 @@ async def search_items_by_text(
 
     if location_name:
         normalized = normalize_location_name(location_name)
-        stmt = stmt.join(Location).where(Location.normalized_name == normalized)
+        stmt = stmt.join(Location).where(Location.normalized_name.contains(normalized))
 
     stmt = stmt.limit(limit)
     result = await session.execute(stmt)
@@ -641,7 +641,7 @@ async def search_items_by_embedding(
 
     if location_name:
         normalized = normalize_location_name(location_name)
-        stmt = stmt.join(Location).where(Location.normalized_name == normalized)
+        stmt = stmt.join(Location).where(Location.normalized_name.contains(normalized))
 
     stmt = stmt.order_by(distance).limit(limit)
     result = await session.execute(stmt)
@@ -966,7 +966,7 @@ async def get_oldest_items(
 
     if location_name:
         normalized = normalize_location_name(location_name)
-        stmt = stmt.where(Location.normalized_name == normalized)
+        stmt = stmt.where(Location.normalized_name.contains(normalized))
 
     stmt = stmt.order_by(ItemLot.added_at.asc()).limit(limit)
 
