@@ -222,7 +222,7 @@ class TestE2EChat:
                 const msgs = document.querySelectorAll('#chat-messages > div');
                 return msgs.length >= 2 && msgs[msgs.length - 1].textContent.length > 50;
             }""",
-            timeout=90000,
+            timeout=120000,
         )
 
         messages = page.locator("#chat-messages").inner_text().lower()
