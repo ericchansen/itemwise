@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Itemwise</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -370,6 +371,15 @@
             btn.classList.remove('text-muted');
             if (tab === 'inventory') { loadInventory(); loadLocations(); }
             if (tab === 'settings') { loadProfile(); loadMembers(); }
+            const selectorRow = document.getElementById('inventory-selector-row');
+            if (tab === 'settings') {
+                selectorRow.classList.add('hidden');
+            } else {
+                const selector = document.getElementById('inventory-selector');
+                if (selector.options.length > 1) {
+                    selectorRow.classList.remove('hidden');
+                }
+            }
         }
 
         function renderMarkdown(text) {
@@ -465,10 +475,16 @@
                 sel.innerHTML = data.inventories.map(inv =>
                     `<option value="${inv.id}" ${inv.id === activeInventoryId ? 'selected' : ''}>${inv.name}</option>`
                 ).join('');
-                if (!activeInventoryId && data.inventories.length > 0) {
-                    activeInventoryId = parseInt(data.inventories[0].id);
+                if (data.inventories.length > 0) {
+                    if (!activeInventoryId || !data.inventories.find(inv => inv.id === activeInventoryId)) {
+                        activeInventoryId = parseInt(data.inventories[0].id);
+                    }
                 }
-                document.getElementById('inventory-selector-row').classList.remove('hidden');
+                if (data.inventories.length > 1) {
+                    document.getElementById('inventory-selector-row').classList.remove('hidden');
+                } else {
+                    document.getElementById('inventory-selector-row').classList.add('hidden');
+                }
             } catch (e) { console.error('Failed to load inventories', e); }
         }
 
@@ -541,10 +557,13 @@
             const email = document.getElementById('member-email').value;
             const fb = document.getElementById('member-feedback');
             if (!activeInventoryId) {
-                fb.textContent = 'No inventory selected';
-                fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
-                fb.classList.remove('hidden');
-                return;
+                await loadInventories();
+                if (!activeInventoryId) {
+                    fb.textContent = 'No inventory selected';
+                    fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
+                    fb.classList.remove('hidden');
+                    return;
+                }
             }
             try {
                 const res = await authFetch(`${API_URL}/api/inventories/${activeInventoryId}/members`, {
