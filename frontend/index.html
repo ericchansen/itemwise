@@ -572,11 +572,16 @@
                     body: JSON.stringify({ email })
                 });
                 if (res.ok) {
-                    fb.textContent = `Added ${email}`;
+                    const data = await res.json();
+                    if (data.status === 'invited') {
+                        fb.textContent = `Invite sent to ${email}`;
+                    } else {
+                        fb.textContent = `Added ${email}`;
+                        loadMembers();
+                    }
                     fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-green-500/10 border border-green-500/20 text-green-400';
                     fb.classList.remove('hidden');
                     document.getElementById('member-email').value = '';
-                    loadMembers();
                 } else {
                     const err = await res.json();
                     fb.textContent = typeof err.detail === 'string' ? err.detail : Array.isArray(err.detail) ? err.detail.map(d => d.msg || JSON.stringify(d)).join(', ') : 'Failed to add member';

@@ -738,23 +738,39 @@ async def add_inventory_member_endpoint(
     inv_id: int,
     request: AddMemberRequest,
 ):
-    """Add a member to an inventory by email."""
+    """Add a member to an inventory by email, or send an invite if they don't have an account."""
     async with AsyncSessionLocal() as session:
-        from .database.crud import add_member_by_email
+        from .database.crud import add_member_by_email, get_inventory
         if not await is_inventory_member(session, inv_id, current_user.user_id):
             raise HTTPException(status_code=403, detail="Not a member of this inventory")
+
+        # Get inventory name and inviter email for the email
+        inventory = await get_inventory(session, inv_id)
+        inventory_name = inventory.name if inventory else "Shared Inventory"
+        inviter_email = current_user.email
+
         member = await add_member_by_email(session, inv_id, request.email)
-        if member is None:
-            raise HTTPException(status_code=404, detail=f"User with email {request.email} not found")
-        return {
-            "status": "success",
-            "message": f"Added {request.email} to inventory",
-            "member": {
-                "id": member.id,
-                "user_id": member.user_id,
-                "joined_at": member.joined_at.isoformat() if member.joined_at else None,
-            },
-        }
+        if member is not None:
+            # User exists and was added — send notification email
+            from .email_service import send_added_email
+            send_added_email(request.email, inviter_email, inventory_name)
+            return {
+                "status": "added",
+                "message": f"Added {request.email} to inventory",
+                "member": {
+                    "id": member.id,
+                    "user_id": member.user_id,
+                    "joined_at": member.joined_at.isoformat() if member.joined_at else None,
+                },
+            }
+        else:
+            # User doesn't exist — send invite email
+            from .email_service import send_invite_email
+            send_invite_email(request.email, inviter_email, inventory_name)
+            return {
+                "status": "invited",
+                "message": f"Invite sent to {request.email}",
+            }
 
 
 @app.delete("/api/inventories/{inv_id}/members/{member_user_id}")

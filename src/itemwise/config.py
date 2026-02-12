@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     # Azure OpenAI embedding deployment name
     azure_openai_embedding_deployment: str = "text-embedding-3-small"
 
+    # Azure Communication Services (for invite emails)
+    azure_communication_connection_string: str = ""
+    azure_communication_sender: str = ""
+
     @property
     def database_url(self) -> str:
         """Construct the database URL for async PostgreSQL connection."""

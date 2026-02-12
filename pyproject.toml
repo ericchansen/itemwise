@@ -24,6 +24,7 @@ dependencies = [
     "slowapi>=0.1.9",
     "bcrypt>=5.0.0",
     "azure-monitor-opentelemetry>=1.6.0",
+    "azure-communication-email>=1.0.0",
 ]
 
 [project.optional-dependencies]
@@ -70,6 +71,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["E501"]  # Allow longer lines in tests
+"src/itemwise/email_service.py" = ["E501"]  # HTML email templates have long lines
 
 [tool.mypy]
 explicit_package_bases = true

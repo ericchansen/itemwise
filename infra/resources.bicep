@@ -241,6 +241,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           name: 'jwt-secret'
           value: uniqueString(resourceToken, 'jwt-secret', postgresPassword)
         }
+        {
+          name: 'comm-connection-string'
+          value: communicationService.listKeys().primaryConnectionString
+        }
       ]
     }
     template: {
@@ -302,6 +306,14 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
               secretRef: 'appinsights-connection-string'
             }
+            {
+              name: 'AZURE_COMMUNICATION_CONNECTION_STRING'
+              secretRef: 'comm-connection-string'
+            }
+            {
+              name: 'AZURE_COMMUNICATION_SENDER'
+              value: 'DoNotReply@${emailDomain.properties.mailFromSenderDomain}'
+            }
           ]
         }
       ]
@@ -326,6 +338,43 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   ]
 }
 
+// Email Communication Service
+resource emailService 'Microsoft.Communication/emailServices@2023-04-01' = {
+  name: 'email-${resourceToken}'
+  location: 'global'
+  tags: tags
+  properties: {
+    dataLocation: 'United States'
+  }
+}
+
+// Azure Managed Email Domain
+resource emailDomain 'Microsoft.Communication/emailServices/domains@2023-04-01' = {
+  parent: emailService
+  name: 'AzureManagedDomain'
+  location: 'global'
+  properties: {
+    domainManagement: 'AzureManaged'
+    userEngagementTracking: 'Disabled'
+  }
+}
+
+// Azure Communication Services (must come after emailDomain to link it)
+resource communicationService 'Microsoft.Communication/communicationServices@2023-04-01' = {
+  name: 'comm-${resourceToken}'
+  location: 'global'
+  tags: tags
+  properties: {
+    dataLocation: 'United States'
+    linkedDomains: [
+      emailDomain.id
+    ]
+  }
+  dependsOn: [
+    emailDomain
+  ]
+}
+
 // Outputs
 output containerRegistryEndpoint string = containerRegistry.properties.loginServer
 output containerRegistryName string = containerRegistry.name
@@ -335,3 +384,5 @@ output postgresDatabase string = postgresDatabase.name
 output logAnalyticsWorkspaceId string = logAnalytics.id
 output appInsightsConnectionString string = appInsights.properties.ConnectionString
 output azureOpenAiEndpoint string = openAi.properties.endpoint
+output communicationServiceEndpoint string = 'https://${communicationService.properties.hostName}'
+output communicationSenderEmail string = 'DoNotReply@${emailDomain.properties.mailFromSenderDomain}'
