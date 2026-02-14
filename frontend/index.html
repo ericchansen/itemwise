@@ -217,6 +217,12 @@
                 </form>
                 <div id="member-feedback" class="hidden mt-3 px-4 py-2.5 rounded-lg text-sm"></div>
             </div>
+            <div class="bg-surface border border-border rounded-2xl p-5 mt-4">
+                <h2 class="font-medium mb-2">Notifications</h2>
+                <p class="text-sm text-muted mb-3">Get an email listing items expiring in the next 7 days.</p>
+                <button onclick="handleSendExpirationReport()" id="expiration-report-btn" class="px-4 py-2.5 bg-accent text-white rounded-lg font-medium hover:bg-accent/90 transition-all">Send Expiration Report</button>
+                <div id="expiration-feedback" class="hidden mt-3 px-4 py-2.5 rounded-lg text-sm"></div>
+            </div>
         </div>
     </main>
 
@@ -716,6 +722,36 @@
                 fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
                 fb.classList.remove('hidden');
             }
+        }
+
+        async function handleSendExpirationReport() {
+            const fb = document.getElementById('expiration-feedback');
+            const btn = document.getElementById('expiration-report-btn');
+            btn.disabled = true;
+            btn.textContent = 'Sending...';
+            try {
+                const res = await authFetch(`${API_URL}/api/notifications/expiration-digest`, { method: 'POST' });
+                const data = await res.json();
+                if (res.ok) {
+                    if (data.status === 'no_items') {
+                        fb.textContent = 'No items expiring soon — nothing to report.';
+                        fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-blue-500/10 border border-blue-500/20 text-blue-400';
+                    } else {
+                        fb.textContent = `Report sent! ${data.item_count} expiring item(s) emailed to you.`;
+                        fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-green-500/10 border border-green-500/20 text-green-400';
+                    }
+                } else {
+                    const detail = data.detail || 'Failed to send report';
+                    fb.textContent = typeof detail === 'string' ? detail : 'Failed to send report';
+                    fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
+                }
+            } catch (e) {
+                fb.textContent = 'Network error';
+                fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
+            }
+            fb.classList.remove('hidden');
+            btn.disabled = false;
+            btn.textContent = 'Send Expiration Report';
         }
 
         function debounceSearch() {

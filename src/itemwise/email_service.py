@@ -94,6 +94,64 @@ def send_password_reset_email(to_email: str, reset_token: str, app_url: str) -> 
     return _send_email(to_email, subject, html_body)
 
 
+def send_expiration_digest_email(to_email: str, expiring_items: list, app_url: str) -> bool:
+    """Send an email digest listing items that are expiring soon."""
+    if not expiring_items:
+        return False
+
+    # Group items by days_until_expiry
+    groups: dict[str, list] = {}
+    for item in expiring_items:
+        days = item.get("days_until_expiry", 0)
+        if days <= 0:
+            label = "Already expired"
+        elif days == 1:
+            label = "Expires tomorrow"
+        else:
+            label = f"Expires in {days} days"
+        groups.setdefault(label, []).append(item)
+
+    # Build HTML rows grouped by urgency
+    sections_html = ""
+    for label, items in groups.items():
+        rows = ""
+        for it in items:
+            loc = it.get("location_name") or "—"
+            rows += (
+                f'<tr><td style="padding:6px 12px;border-bottom:1px solid #333;">{it["item_name"]}</td>'
+                f'<td style="padding:6px 12px;border-bottom:1px solid #333;">{it["lot_quantity"]}</td>'
+                f'<td style="padding:6px 12px;border-bottom:1px solid #333;">{loc}</td>'
+                f'<td style="padding:6px 12px;border-bottom:1px solid #333;">{it["expiration_date"]}</td></tr>'
+            )
+        sections_html += f"""
+        <h3 style="color:#f59e0b;margin:16px 0 8px 0;font-size:14px;">⚠️ {label}</h3>
+        <table style="width:100%;border-collapse:collapse;color:#cccccc;font-size:13px;">
+            <tr style="text-align:left;color:#888;">
+                <th style="padding:6px 12px;border-bottom:1px solid #444;">Item</th>
+                <th style="padding:6px 12px;border-bottom:1px solid #444;">Qty</th>
+                <th style="padding:6px 12px;border-bottom:1px solid #444;">Location</th>
+                <th style="padding:6px 12px;border-bottom:1px solid #444;">Expires</th>
+            </tr>
+            {rows}
+        </table>
+        """
+
+    subject = f"Itemwise: {len(expiring_items)} item(s) expiring soon"
+    html_body = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; padding: 32px; background: #0f0f0f; color: #ffffff; border-radius: 16px;">
+        <h1 style="font-size: 24px; margin: 0 0 24px 0;">📦 Itemwise — Expiration Report</h1>
+        <p style="color: #cccccc; line-height: 1.6;">
+            You have <strong>{len(expiring_items)}</strong> item(s) expiring soon. Review them below:
+        </p>
+        {sections_html}
+        <a href="{app_url}" style="display: inline-block; margin: 24px 0 0 0; padding: 12px 24px; background: #3b82f6; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600;">
+            Open Itemwise
+        </a>
+    </div>
+    """
+    return _send_email(to_email, subject, html_body)
+
+
 def send_added_email(to_email: str, inviter_email: str, inventory_name: str) -> bool:
     """Send a notification email to a user who was added to an inventory."""
     subject = "You've been added to an inventory on Itemwise"

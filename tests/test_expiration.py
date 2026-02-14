@@ -196,3 +196,75 @@ async def test_expiring_items_api_endpoint(db_session, test_user, test_inventory
     assert data["count"] == 1
     assert data["days_window"] == 7
     assert data["items"][0]["item_name"] == "Milk"
+
+
+@pytest.mark.asyncio
+async def test_expiration_digest_sends_email(db_session, test_user, test_inventory, test_item):
+    """Test POST /api/notifications/expiration-digest returns sent when items are expiring."""
+    from unittest.mock import patch, AsyncMock
+    from itemwise.api import app
+    from itemwise.auth import create_access_token
+
+    exp_date = date.today() + timedelta(days=3)
+    await create_lot(
+        db_session,
+        item_id=test_item.id,
+        quantity=2,
+        added_by_user_id=test_user.id,
+        expiration_date=exp_date,
+    )
+
+    token = create_access_token(test_user.id, test_user.email)
+
+    mock_session_cm = AsyncMock()
+    mock_session_cm.__aenter__ = AsyncMock(return_value=db_session)
+    mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+    with (
+        patch("itemwise.api.AsyncSessionLocal", return_value=mock_session_cm),
+        patch("itemwise.email_service.send_expiration_digest_email", return_value=True) as mock_send,
+    ):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/notifications/expiration-digest?days=7",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Inventory-Id": str(test_inventory.id),
+                },
+            )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "sent"
+    assert data["item_count"] == 1
+    mock_send.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_expiration_digest_no_items(db_session, test_user, test_inventory, test_item):
+    """Test POST /api/notifications/expiration-digest returns no_items when nothing is expiring."""
+    from unittest.mock import patch, AsyncMock
+    from itemwise.api import app
+    from itemwise.auth import create_access_token
+
+    token = create_access_token(test_user.id, test_user.email)
+
+    mock_session_cm = AsyncMock()
+    mock_session_cm.__aenter__ = AsyncMock(return_value=db_session)
+    mock_session_cm.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("itemwise.api.AsyncSessionLocal", return_value=mock_session_cm):
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/api/notifications/expiration-digest?days=7",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Inventory-Id": str(test_inventory.id),
+                },
+            )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "no_items"

@@ -515,6 +515,25 @@ async def get_expiring_items_endpoint(
         }
 
 
+@app.post("/api/notifications/expiration-digest")
+async def send_expiration_digest(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
+    days: int = Query(7, ge=1, le=365, description="Number of days to look ahead"),
+):
+    """Send an email digest of items expiring within N days."""
+    async with AsyncSessionLocal() as session:
+        items = await get_expiring_items(session, inventory_id, days=days)
+        if not items:
+            return {"status": "no_items"}
+
+        from .email_service import send_expiration_digest_email, APP_URL
+        sent = send_expiration_digest_email(current_user.email, items, APP_URL)
+        if not sent:
+            raise HTTPException(status_code=500, detail="Failed to send digest email")
+        return {"status": "sent", "item_count": len(items)}
+
+
 @app.get("/api/items/{item_id}")
 async def get_single_item(
     current_user: Annotated[TokenData, Depends(get_current_user)],
