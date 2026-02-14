@@ -13,6 +13,7 @@ if os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING"):
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from datetime import date
 from typing import Any, Optional
 
 from fastmcp import FastMCP
@@ -24,6 +25,7 @@ from .database.crud import (
     create_lot,
     create_user,
     delete_item,
+    get_expiring_items,
     get_item,
     get_lots_for_item,  # noqa: F401
     get_oldest_items,
@@ -106,12 +108,13 @@ async def add_item(
     category: str,
     location: str = "",
     description: str = "",
+    expiration_date: str = "",
 ) -> dict[str, Any]:
     """Add a new item to inventory at a specific location.
 
     Use this tool when the user wants to add or store something. The location
     can be any storage place like "freezer", "garage", "pantry", "battery bin",
-    "closet", "toolbox", etc.
+    "closet", "toolbox", etc. Items can optionally have an expiration date.
 
     Args:
         name: Name of the item (e.g., "Chicken Breast", "AAA Batteries", "Hammer")
@@ -119,6 +122,7 @@ async def add_item(
         category: Category such as "meat", "vegetables", "electronics", "tools"
         location: Storage location (e.g., "Freezer", "Garage", "Battery Bin"). If not specified, item is stored without location.
         description: Optional detailed description of the item
+        expiration_date: Optional expiration date in ISO format (YYYY-MM-DD). Use for perishable items.
 
     Returns:
         Dictionary with status, message, item_id, and location info
@@ -126,7 +130,7 @@ async def add_item(
     Examples:
         - "Add 3 chicken breasts to the freezer" -> add_item("Chicken Breast", 3, "meat", "Freezer")
         - "Put 8 AAA batteries in the battery bin" -> add_item("AAA Batteries", 8, "electronics", "Battery Bin")
-        - "Store a hammer in the garage" -> add_item("Hammer", 1, "tools", "Garage")
+        - "Add milk expiring 2025-02-15" -> add_item("Milk", 1, "dairy", "Fridge", expiration_date="2025-02-15")
     """
     try:
         async with AsyncSessionLocal() as session:
@@ -170,12 +174,21 @@ async def add_item(
                 embedding=embedding,
             )
 
+            # Parse expiration date if provided
+            parsed_expiration: date | None = None
+            if expiration_date:
+                try:
+                    parsed_expiration = date.fromisoformat(expiration_date)
+                except ValueError:
+                    pass  # Ignore unparseable dates
+
             # Create a lot for tracking (this adds to item.quantity)
             await create_lot(
                 session,
                 item_id=item.id,
                 quantity=quantity,
                 added_by_user_id=user_id,
+                expiration_date=parsed_expiration,
             )
 
             return {
@@ -612,6 +625,40 @@ async def get_oldest_items_tool(
     except Exception as e:
         logger.exception("Error getting oldest items")
         raise ToolError(f"Failed to get oldest items: {str(e)}")
+
+
+@mcp.tool()  # type: ignore[misc]
+async def get_expiring_items_tool(
+    days: int = 7,
+) -> dict[str, Any]:
+    """Get items that are expiring soon.
+
+    Use this when the user asks what's expiring, what needs to be used soon,
+    or wants to check expiration dates.
+
+    Args:
+        days: Number of days to look ahead (default: 7)
+
+    Returns:
+        Dictionary with items expiring within the specified window
+
+    Examples:
+        - "What's expiring soon?" -> get_expiring_items_tool()
+        - "What expires this month?" -> get_expiring_items_tool(days=30)
+    """
+    try:
+        async with AsyncSessionLocal() as session:
+            _, inventory_id = await _get_default_context(session)
+            expiring = await get_expiring_items(session, inventory_id, days=days)
+            return {
+                "status": "success",
+                "count": len(expiring),
+                "days_window": days,
+                "items": expiring,
+            }
+    except Exception as e:
+        logger.exception("Error getting expiring items")
+        raise ToolError(f"Failed to get expiring items: {str(e)}")
 
 
 def main() -> None:

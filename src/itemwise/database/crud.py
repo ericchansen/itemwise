@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+from datetime import date, timedelta
 from typing import Any, Optional
 
 from sqlalchemy import delete, func, select
@@ -762,6 +763,7 @@ async def create_lot(
     quantity: int,
     added_by_user_id: Optional[int] = None,
     notes: Optional[str] = None,
+    expiration_date: Optional[date] = None,
 ) -> ItemLot:
     """Create a new lot for an inventory item.
 
@@ -773,6 +775,7 @@ async def create_lot(
         quantity: Quantity for this lot
         added_by_user_id: Optional ID of the user who added the lot
         notes: Optional notes about the lot
+        expiration_date: Optional expiration date for this lot
 
     Returns:
         The created item lot
@@ -790,6 +793,7 @@ async def create_lot(
         quantity=quantity,
         added_by_user_id=added_by_user_id,
         notes=notes,
+        expiration_date=expiration_date,
     )
     session.add(lot)
     item.quantity += quantity
@@ -948,7 +952,7 @@ async def get_oldest_items(
 
     Returns:
         List of dicts with item_name, item_id, lot_id, lot_quantity,
-        added_at (ISO string), and location_name
+        added_at (ISO string), location_name, and expiration_date
     """
     stmt = (
         select(
@@ -957,6 +961,7 @@ async def get_oldest_items(
             ItemLot.id.label("lot_id"),
             ItemLot.quantity.label("lot_quantity"),
             ItemLot.added_at,
+            ItemLot.expiration_date,
             Location.name.label("location_name"),
         )
         .join(InventoryItem, ItemLot.item_id == InventoryItem.id)
@@ -981,6 +986,57 @@ async def get_oldest_items(
             "lot_quantity": row.lot_quantity,
             "added_at": row.added_at.isoformat() if row.added_at else None,
             "location_name": row.location_name,
+            "expiration_date": row.expiration_date.isoformat() if row.expiration_date else None,
+        }
+        for row in rows
+    ]
+
+
+async def get_expiring_items(
+    session: AsyncSession,
+    inventory_id: int,
+    days: int = 7,
+) -> list[dict]:
+    """Find items with lots expiring within N days.
+
+    Args:
+        session: Database session
+        inventory_id: ID of the inventory to search
+        days: Number of days to look ahead (default 7)
+
+    Returns:
+        List of dicts with item_name, lot_quantity, expiration_date,
+        location_name, and days_until_expiry, ordered by expiration_date asc
+    """
+    today = date.today()
+    cutoff = today + timedelta(days=days)
+
+    stmt = (
+        select(
+            InventoryItem.name.label("item_name"),
+            ItemLot.quantity.label("lot_quantity"),
+            ItemLot.expiration_date,
+            Location.name.label("location_name"),
+        )
+        .join(InventoryItem, ItemLot.item_id == InventoryItem.id)
+        .outerjoin(Location, InventoryItem.location_id == Location.id)
+        .where(InventoryItem.inventory_id == inventory_id)
+        .where(ItemLot.expiration_date.isnot(None))
+        .where(ItemLot.expiration_date <= cutoff)
+        .where(ItemLot.quantity > 0)
+        .order_by(ItemLot.expiration_date.asc())
+    )
+
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    return [
+        {
+            "item_name": row.item_name,
+            "lot_quantity": row.lot_quantity,
+            "expiration_date": row.expiration_date.isoformat(),
+            "location_name": row.location_name,
+            "days_until_expiry": (row.expiration_date - today).days,
         }
         for row in rows
     ]

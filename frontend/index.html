@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Itemwise</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#111827">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <link rel="apple-touch-icon" href="/icons/icon-192.svg">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -65,16 +70,42 @@
     <!-- Auth Screen -->
     <div id="auth-screen" class="max-w-sm mx-auto px-6 py-20">
         <div class="bg-surface border border-border rounded-2xl p-6">
-            <div class="flex gap-1 bg-card rounded-lg p-1 mb-6">
-                <button onclick="showAuthTab('login')" id="auth-tab-login" class="flex-1 py-2 rounded-md text-sm transition-all bg-white/10 text-white">Login</button>
-                <button onclick="showAuthTab('register')" id="auth-tab-register" class="flex-1 py-2 rounded-md text-sm transition-all text-muted">Register</button>
+            <!-- Login/Register Form -->
+            <div id="auth-login-register">
+                <div class="flex gap-1 bg-card rounded-lg p-1 mb-6">
+                    <button onclick="showAuthTab('login')" id="auth-tab-login" class="flex-1 py-2 rounded-md text-sm transition-all bg-white/10 text-white">Login</button>
+                    <button onclick="showAuthTab('register')" id="auth-tab-register" class="flex-1 py-2 rounded-md text-sm transition-all text-muted">Register</button>
+                </div>
+                <div id="auth-error" class="hidden mb-4 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm"></div>
+                <div id="auth-success" class="hidden mb-4 px-4 py-2.5 bg-green-500/10 border border-green-500/20 rounded-lg text-green-400 text-sm"></div>
+                <form onsubmit="handleAuth(event)" class="space-y-4">
+                    <input type="email" id="auth-email" required placeholder="Email" class="w-full px-4 py-2.5 bg-card border border-border rounded-lg text-white placeholder-muted">
+                    <input type="password" id="auth-password" required placeholder="Password" minlength="8" class="w-full px-4 py-2.5 bg-card border border-border rounded-lg text-white placeholder-muted">
+                    <button type="submit" id="auth-submit" class="w-full px-4 py-2.5 bg-accent text-white rounded-lg font-medium hover:bg-accent/90 transition-all">Login</button>
+                </form>
+                <p id="forgot-password-link" class="text-center mt-4 text-sm text-muted cursor-pointer hover:text-white transition-colors" onclick="showForgotPassword()">Forgot Password?</p>
             </div>
-            <div id="auth-error" class="hidden mb-4 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm"></div>
-            <form onsubmit="handleAuth(event)" class="space-y-4">
-                <input type="email" id="auth-email" required placeholder="Email" class="w-full px-4 py-2.5 bg-card border border-border rounded-lg text-white placeholder-muted">
-                <input type="password" id="auth-password" required placeholder="Password" minlength="8" class="w-full px-4 py-2.5 bg-card border border-border rounded-lg text-white placeholder-muted">
-                <button type="submit" id="auth-submit" class="w-full px-4 py-2.5 bg-accent text-white rounded-lg font-medium hover:bg-accent/90 transition-all">Login</button>
-            </form>
+            <!-- Forgot Password Form -->
+            <div id="auth-forgot-password" class="hidden">
+                <h2 class="text-lg font-semibold text-white mb-4">Reset Password</h2>
+                <div id="forgot-error" class="hidden mb-4 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm"></div>
+                <div id="forgot-success" class="hidden mb-4 px-4 py-2.5 bg-green-500/10 border border-green-500/20 rounded-lg text-green-400 text-sm"></div>
+                <form onsubmit="handleForgotPassword(event)" class="space-y-4">
+                    <input type="email" id="forgot-email" required placeholder="Email" class="w-full px-4 py-2.5 bg-card border border-border rounded-lg text-white placeholder-muted">
+                    <button type="submit" class="w-full px-4 py-2.5 bg-accent text-white rounded-lg font-medium hover:bg-accent/90 transition-all">Send Reset Link</button>
+                </form>
+                <p class="text-center mt-4 text-sm text-muted cursor-pointer hover:text-white transition-colors" onclick="showLoginFromForgot()">Back to Login</p>
+            </div>
+            <!-- Reset Password Form -->
+            <div id="auth-reset-password" class="hidden">
+                <h2 class="text-lg font-semibold text-white mb-4">Set New Password</h2>
+                <div id="reset-error" class="hidden mb-4 px-4 py-2.5 bg-red-500/10 border border-red-500/20 rounded-lg text-red-400 text-sm"></div>
+                <form onsubmit="handleResetPassword(event)" class="space-y-4">
+                    <input type="password" id="reset-password" required placeholder="New Password" minlength="8" class="w-full px-4 py-2.5 bg-card border border-border rounded-lg text-white placeholder-muted">
+                    <input type="password" id="reset-password-confirm" required placeholder="Confirm Password" minlength="8" class="w-full px-4 py-2.5 bg-card border border-border rounded-lg text-white placeholder-muted">
+                    <button type="submit" class="w-full px-4 py-2.5 bg-accent text-white rounded-lg font-medium hover:bg-accent/90 transition-all">Reset Password</button>
+                </form>
+            </div>
         </div>
     </div>
 
@@ -356,8 +387,92 @@
             document.querySelectorAll('main').forEach(el => el.classList.add('hidden'));
         }
 
+        function showForgotPassword() {
+            document.getElementById('auth-login-register').classList.add('hidden');
+            document.getElementById('auth-forgot-password').classList.remove('hidden');
+            document.getElementById('auth-reset-password').classList.add('hidden');
+            document.getElementById('forgot-error').classList.add('hidden');
+            document.getElementById('forgot-success').classList.add('hidden');
+        }
+
+        function showLoginFromForgot() {
+            document.getElementById('auth-login-register').classList.remove('hidden');
+            document.getElementById('auth-forgot-password').classList.add('hidden');
+            document.getElementById('auth-reset-password').classList.add('hidden');
+        }
+
+        function showResetPasswordForm() {
+            document.getElementById('auth-login-register').classList.add('hidden');
+            document.getElementById('auth-forgot-password').classList.add('hidden');
+            document.getElementById('auth-reset-password').classList.remove('hidden');
+            document.getElementById('reset-error').classList.add('hidden');
+        }
+
+        async function handleForgotPassword(e) {
+            e.preventDefault();
+            const email = document.getElementById('forgot-email').value;
+            const errorEl = document.getElementById('forgot-error');
+            const successEl = document.getElementById('forgot-success');
+            errorEl.classList.add('hidden');
+            successEl.classList.add('hidden');
+            try {
+                const res = await fetch(`${API_URL}/api/auth/forgot-password`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email })
+                });
+                const data = await res.json();
+                successEl.textContent = 'If an account exists with that email, a reset link has been sent.';
+                successEl.classList.remove('hidden');
+            } catch {
+                errorEl.textContent = 'Connection error. Please try again.';
+                errorEl.classList.remove('hidden');
+            }
+        }
+
+        async function handleResetPassword(e) {
+            e.preventDefault();
+            const password = document.getElementById('reset-password').value;
+            const confirm = document.getElementById('reset-password-confirm').value;
+            const errorEl = document.getElementById('reset-error');
+            errorEl.classList.add('hidden');
+            if (password !== confirm) {
+                errorEl.textContent = 'Passwords do not match';
+                errorEl.classList.remove('hidden');
+                return;
+            }
+            const params = new URLSearchParams(window.location.search);
+            const token = params.get('reset_token');
+            try {
+                const res = await fetch(`${API_URL}/api/auth/reset-password`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token, new_password: password })
+                });
+                if (!res.ok) {
+                    const err = await res.json();
+                    errorEl.textContent = err.detail || 'Reset failed';
+                    errorEl.classList.remove('hidden');
+                    return;
+                }
+                window.history.replaceState({}, '', window.location.pathname);
+                document.getElementById('auth-reset-password').classList.add('hidden');
+                document.getElementById('auth-login-register').classList.remove('hidden');
+                const successEl = document.getElementById('auth-success');
+                successEl.textContent = 'Password reset successfully. Please log in.';
+                successEl.classList.remove('hidden');
+            } catch {
+                errorEl.textContent = 'Connection error. Please try again.';
+                errorEl.classList.remove('hidden');
+            }
+        }
+
         // ===== Init =====
-        if (getToken()) { showApp(); } else { showAuthScreen(); }
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.has('reset_token')) {
+            showAuthScreen();
+            showResetPasswordForm();
+        } else if (getToken()) { showApp(); } else { showAuthScreen(); }
 
         function showTab(tab) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
@@ -573,13 +688,21 @@
                 });
                 if (res.ok) {
                     const data = await res.json();
-                    if (data.status === 'invited') {
+                    if (data.status === 'invite_failed') {
+                        fb.textContent = `Could not send invite email to ${email}`;
+                        fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
+                    } else if (data.status === 'added' && data.email_warning) {
+                        fb.textContent = `Added ${email} but notification email failed`;
+                        fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-amber-500/10 border border-amber-500/20 text-amber-400';
+                        loadMembers();
+                    } else if (data.status === 'invited') {
                         fb.textContent = `Invite sent to ${email}`;
+                        fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-green-500/10 border border-green-500/20 text-green-400';
                     } else {
                         fb.textContent = `Added ${email}`;
+                        fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-green-500/10 border border-green-500/20 text-green-400';
                         loadMembers();
                     }
-                    fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-green-500/10 border border-green-500/20 text-green-400';
                     fb.classList.remove('hidden');
                     document.getElementById('member-email').value = '';
                 } else {
@@ -639,6 +762,41 @@
                 const res = await authFetch(`${API_URL}/api/items/${id}`, { method: 'DELETE' });
                 if (res.ok) loadInventory();
             } catch (e) {}
+        }
+    </script>
+
+    <!-- PWA: Service Worker Registration & Install Prompt -->
+    <div id="pwa-install-banner" class="hidden fixed bottom-4 left-4 right-4 max-w-sm mx-auto
+        bg-surface border border-border rounded-xl p-4 flex items-center justify-between z-50 shadow-lg">
+        <span class="text-sm text-white">Install Itemwise for quick access</span>
+        <div class="flex gap-2 ml-3">
+            <button onclick="dismissInstall()" class="text-xs text-muted hover:text-white">Later</button>
+            <button onclick="installPWA()" class="text-xs bg-accent px-3 py-1 rounded-lg text-white">Install</button>
+        </div>
+    </div>
+    <script>
+        // Service Worker registration
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(() => {});
+        }
+
+        // Install prompt
+        let deferredPrompt = null;
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            document.getElementById('pwa-install-banner').classList.remove('hidden');
+        });
+
+        function installPWA() {
+            if (!deferredPrompt) return;
+            deferredPrompt.prompt();
+            deferredPrompt.userChoice.then(() => { deferredPrompt = null; });
+            document.getElementById('pwa-install-banner').classList.add('hidden');
+        }
+
+        function dismissInstall() {
+            document.getElementById('pwa-install-banner').classList.add('hidden');
         }
     </script>
 </body>

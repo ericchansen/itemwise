@@ -73,6 +73,27 @@ def send_invite_email(to_email: str, inviter_email: str, inventory_name: str) ->
     return _send_email(to_email, subject, html_body)
 
 
+def send_password_reset_email(to_email: str, reset_token: str, app_url: str) -> bool:
+    """Send a password reset email with a link containing the reset token."""
+    reset_link = f"{app_url}?reset_token={reset_token}"
+    subject = "Reset your Itemwise password"
+    html_body = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 480px; margin: 0 auto; padding: 32px; background: #0f0f0f; color: #ffffff; border-radius: 16px;">
+        <h1 style="font-size: 24px; margin: 0 0 24px 0;">📦 Itemwise</h1>
+        <p style="color: #cccccc; line-height: 1.6;">
+            We received a request to reset your password. Click the button below to set a new password:
+        </p>
+        <a href="{reset_link}" style="display: inline-block; margin: 16px 0; padding: 12px 24px; background: #3b82f6; color: #ffffff; text-decoration: none; border-radius: 8px; font-weight: 600;">
+            Reset Password
+        </a>
+        <p style="color: #666666; font-size: 12px; margin-top: 24px;">
+            This link expires in 15 minutes. If you didn't request a password reset, you can safely ignore this email.
+        </p>
+    </div>
+    """
+    return _send_email(to_email, subject, html_body)
+
+
 def send_added_email(to_email: str, inviter_email: str, inventory_name: str) -> bool:
     """Send a notification email to a user who was added to an inventory."""
     subject = "You've been added to an inventory on Itemwise"

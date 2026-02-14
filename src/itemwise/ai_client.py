@@ -76,6 +76,13 @@ INVENTORY_TOOLS = [
                         "type": "string",
                         "description": "Optional description or notes about the item",
                     },
+                    "expiration_date": {
+                        "type": "string",
+                        "description": (
+                            "Optional expiration date in ISO format (YYYY-MM-DD)."
+                            " Use for perishable items like food, medicine, etc."
+                        ),
+                    },
                 },
                 "required": ["name", "quantity", "category", "location"],
             },
@@ -186,6 +193,28 @@ INVENTORY_TOOLS = [
                         "description": "Maximum number of items to return (default: 10)",
                         "minimum": 1,
                         "maximum": 50,
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_expiring_items",
+            "description": (
+                "Get items that are expiring soon. Use this when the user asks"
+                " what's expiring, what needs to be used before it goes bad,"
+                " or wants to check expiration dates."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days to look ahead (default: 7)",
+                        "minimum": 1,
+                        "maximum": 365,
                     },
                 },
             },

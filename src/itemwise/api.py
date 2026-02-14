@@ -7,11 +7,15 @@ from pathlib import Path
 from typing import Annotated, Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
 
@@ -25,6 +29,7 @@ from .database.crud import (
     create_lot,
     create_user,
     delete_item,
+    get_expiring_items,
     get_item,
     get_lots_for_item,
     get_or_create_location,
@@ -50,11 +55,13 @@ from .auth import (
     TokenData,
     create_access_token,
     create_refresh_token,
+    create_reset_token,
     decode_access_token,
     decode_refresh_token,
     hash_password,
     validate_password,
     verify_password,
+    verify_reset_token,
 )
 
 # Configure logging
@@ -104,6 +111,15 @@ class UserRegister(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
+    new_password: str = Field(..., min_length=8)
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
     new_password: str = Field(..., min_length=8)
 
 
@@ -172,6 +188,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Rate limiting
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Return JSON 429 with Retry-After header."""
+    retry_after = exc.detail.split(" ")[-1] if exc.detail else "60"
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded"},
+        headers={"Retry-After": retry_after},
+    )
+
 
 @app.get("/health")
 async def health_check():
@@ -238,7 +270,8 @@ async def get_active_inventory_id(
 
 
 @app.post("/api/auth/register", response_model=Token, status_code=status.HTTP_201_CREATED)
-async def register(user_data: UserRegister):
+@limiter.limit("5/minute")
+async def register(request: Request, user_data: UserRegister):
     """Register a new user account.
 
     Returns access and refresh tokens on successful registration.
@@ -263,7 +296,8 @@ async def register(user_data: UserRegister):
 
 
 @app.post("/api/auth/login", response_model=Token)
-async def login(form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
+@limiter.limit("10/minute")
+async def login(request: Request, form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
     """Login and get access/refresh tokens.
 
     Uses constant-time comparison to prevent timing attacks.
@@ -333,6 +367,43 @@ async def change_password(
         await session.commit()
 
     return {"message": "Password updated successfully"}
+
+
+@app.post("/api/auth/forgot-password")
+async def forgot_password(body: ForgotPasswordRequest):
+    """Request a password reset email.
+
+    Always returns 200 to prevent email enumeration.
+    """
+    async with AsyncSessionLocal() as session:
+        user = await get_user_by_email(session, body.email)
+        if user:
+            token = create_reset_token(body.email)
+            from .email_service import send_password_reset_email, APP_URL
+            send_password_reset_email(body.email, token, APP_URL)
+
+    return {"message": "If an account exists with that email, a reset link has been sent."}
+
+
+@app.post("/api/auth/reset-password")
+async def reset_password(body: ResetPasswordRequest):
+    """Reset password using a valid reset token."""
+    email = verify_reset_token(body.token)
+    if not email:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    is_valid, error_msg = validate_password(body.new_password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+
+    async with AsyncSessionLocal() as session:
+        user = await get_user_by_email(session, email)
+        if not user:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+        user.hashed_password = hash_password(body.new_password)
+        await session.commit()
+
+    return {"message": "Password has been reset successfully"}
 
 
 # ===== Item Endpoints =====
@@ -425,6 +496,22 @@ async def create_new_item(
                 "location": location_name,
                 "description": new_item.description,
             },
+        }
+
+
+@app.get("/api/items/expiring")
+async def get_expiring_items_endpoint(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
+    days: int = Query(7, ge=1, le=365, description="Number of days to look ahead"),
+):
+    """Get items expiring within N days."""
+    async with AsyncSessionLocal() as session:
+        items = await get_expiring_items(session, inventory_id, days=days)
+        return {
+            "count": len(items),
+            "days_window": days,
+            "items": items,
         }
 
 
@@ -753,8 +840,8 @@ async def add_inventory_member_endpoint(
         if member is not None:
             # User exists and was added — send notification email
             from .email_service import send_added_email
-            send_added_email(request.email, inviter_email, inventory_name)
-            return {
+            email_sent = send_added_email(request.email, inviter_email, inventory_name)
+            response = {
                 "status": "added",
                 "message": f"Added {request.email} to inventory",
                 "member": {
@@ -763,10 +850,18 @@ async def add_inventory_member_endpoint(
                     "joined_at": member.joined_at.isoformat() if member.joined_at else None,
                 },
             }
+            if not email_sent:
+                response["email_warning"] = "Member added but notification email failed to send"
+            return response
         else:
             # User doesn't exist — send invite email
             from .email_service import send_invite_email
-            send_invite_email(request.email, inviter_email, inventory_name)
+            email_sent = send_invite_email(request.email, inviter_email, inventory_name)
+            if not email_sent:
+                return {
+                    "status": "invite_failed",
+                    "detail": "Could not send invite email. Please check the email address and try again.",
+                }
             return {
                 "status": "invited",
                 "message": f"Invite sent to {request.email}",
@@ -794,7 +889,9 @@ async def remove_inventory_member_endpoint(
 
 
 @app.post("/api/chat", response_model=ChatResponse)
+@limiter.limit("20/minute")
 async def chat(
+    request: Request,
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inventory_id: Annotated[int, Depends(get_active_inventory_id)],
     message: ChatMessage,
@@ -1106,6 +1203,35 @@ async def _chat_fallback(user_message: str, inventory_id: int) -> ChatResponse:
 
 
 # ===== Frontend Serving =====
+
+
+@app.get("/manifest.json")
+async def serve_manifest():
+    """Serve the PWA manifest."""
+    manifest_path = FRONTEND_DIR / "manifest.json"
+    if manifest_path.exists():
+        return FileResponse(manifest_path, media_type="application/manifest+json")
+    raise HTTPException(status_code=404, detail="Manifest not found")
+
+
+@app.get("/sw.js")
+async def serve_service_worker():
+    """Serve the service worker from root scope."""
+    sw_path = FRONTEND_DIR / "sw.js"
+    if sw_path.exists():
+        return FileResponse(sw_path, media_type="application/javascript")
+    raise HTTPException(status_code=404, detail="Service worker not found")
+
+
+@app.get("/icons/{icon_name}")
+async def serve_icon(icon_name: str):
+    """Serve PWA icon files."""
+    icons_dir = FRONTEND_DIR / "icons"
+    icon_path = (icons_dir / icon_name).resolve()
+    if icon_path.exists() and icon_path.parent == icons_dir.resolve():
+        media_type = "image/svg+xml" if icon_name.endswith(".svg") else "image/png"
+        return FileResponse(icon_path, media_type=media_type)
+    raise HTTPException(status_code=404, detail="Icon not found")
 
 
 @app.get("/")
