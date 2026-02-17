@@ -61,13 +61,13 @@ jobs:
           MANAGED_IDENTITY_ID="$(az identity list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].id" -o tsv)"
           MANAGED_IDENTITY_CLIENT_ID="$(az identity list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].clientId" -o tsv)"
           echo "MANAGED_IDENTITY_CLIENT_ID=$MANAGED_IDENTITY_CLIENT_ID"
-          OPENAI_ENDPOINT="$(az cognitiveservices account list --resource-group "$AZURE_RESOURCE_GROUP" --query "[?kind=='OpenAI'][0].properties.endpoint" -o tsv)"
+          OPENAI_ENDPOINT="$(az cognitiveservices account list --resource-group "$AZURE_RESOURCE_GROUP" --query "[?kind=='OpenAI'] | [0].properties.endpoint" -o tsv)"
           echo "OPENAI_ENDPOINT=$OPENAI_ENDPOINT"
-          PROD_APP_NAME="$(az containerapp list --resource-group "$AZURE_RESOURCE_GROUP" --query "[?starts_with(name, 'ca-api-')][0].name" -o tsv)"
+          PROD_APP_NAME="$(az containerapp list --resource-group "$AZURE_RESOURCE_GROUP" --query "[?starts_with(name, 'ca-api-')] | [0].name" -o tsv)"
           echo "PROD_APP_NAME=$PROD_APP_NAME"
 
-          OPENAI_DEPLOYMENT="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$PROD_APP_NAME" --query "properties.template.containers[0].env[?name=='AZURE_OPENAI_DEPLOYMENT'].value | [0]" -o tsv)"
-          OPENAI_EMBEDDING_DEPLOYMENT="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$PROD_APP_NAME" --query "properties.template.containers[0].env[?name=='AZURE_OPENAI_EMBEDDING_DEPLOYMENT'].value | [0]" -o tsv)"
+          OPENAI_DEPLOYMENT="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$PROD_APP_NAME" --query "properties.template.containers[0].env[?name=='AZURE_OPENAI_DEPLOYMENT'] | [0].value" -o tsv)"
+          OPENAI_EMBEDDING_DEPLOYMENT="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$PROD_APP_NAME" --query "properties.template.containers[0].env[?name=='AZURE_OPENAI_EMBEDDING_DEPLOYMENT'] | [0].value" -o tsv)"
 
           if [[ -z "$ACR_NAME" || -z "$CAE_NAME" || -z "$PG_SERVER" || -z "$PG_HOST" || -z "$MANAGED_IDENTITY_ID" || -z "$MANAGED_IDENTITY_CLIENT_ID" || -z "$OPENAI_ENDPOINT" ]]; then
             echo "Failed to discover shared infrastructure in $AZURE_RESOURCE_GROUP"
