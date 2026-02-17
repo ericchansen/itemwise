@@ -1,0 +1,263 @@
+name: PR Staging
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    branches: [master, main]
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: pr-staging-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  AZURE_RESOURCE_GROUP: rg-itemwise-prod
+  STAGE_APP_NAME: ca-pr-${{ github.event.pull_request.number }}
+  STAGE_DB_NAME: inventory_pr_${{ github.event.pull_request.number }}
+  IMAGE_TAG: pr-${{ github.event.pull_request.number }}
+
+jobs:
+  deploy-and-test:
+    if: github.event.action != 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Discover shared resources
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ACR_NAME="$(az acr list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].name" -o tsv)"
+          CAE_NAME="$(az containerapp env list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].name" -o tsv)"
+          PG_SERVER="$(az postgres flexible-server list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].name" -o tsv)"
+          PG_HOST="$(az postgres flexible-server show --resource-group "$AZURE_RESOURCE_GROUP" --name "$PG_SERVER" --query "fullyQualifiedDomainName" -o tsv)"
+          MANAGED_IDENTITY_ID="$(az identity list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].id" -o tsv)"
+          MANAGED_IDENTITY_CLIENT_ID="$(az identity list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].clientId" -o tsv)"
+          OPENAI_ENDPOINT="$(az cognitiveservices account list --resource-group "$AZURE_RESOURCE_GROUP" --query "[?kind=='OpenAI'][0].properties.endpoint" -o tsv)"
+          PROD_APP_NAME="$(az containerapp list --resource-group "$AZURE_RESOURCE_GROUP" --query "[?starts_with(name, 'ca-api-')][0].name" -o tsv)"
+
+          OPENAI_DEPLOYMENT="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$PROD_APP_NAME" --query "properties.template.containers[0].env[?name=='AZURE_OPENAI_DEPLOYMENT'].value | [0]" -o tsv)"
+          OPENAI_EMBEDDING_DEPLOYMENT="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$PROD_APP_NAME" --query "properties.template.containers[0].env[?name=='AZURE_OPENAI_EMBEDDING_DEPLOYMENT'].value | [0]" -o tsv)"
+
+          if [[ -z "$ACR_NAME" || -z "$CAE_NAME" || -z "$PG_SERVER" || -z "$PG_HOST" || -z "$MANAGED_IDENTITY_ID" || -z "$MANAGED_IDENTITY_CLIENT_ID" || -z "$OPENAI_ENDPOINT" ]]; then
+            echo "Failed to discover shared infrastructure in $AZURE_RESOURCE_GROUP"
+            exit 1
+          fi
+
+          if [[ -z "$OPENAI_DEPLOYMENT" ]]; then
+            OPENAI_DEPLOYMENT="gpt-4o-mini"
+          fi
+          if [[ -z "$OPENAI_EMBEDDING_DEPLOYMENT" ]]; then
+            OPENAI_EMBEDDING_DEPLOYMENT="text-embedding-3-small"
+          fi
+
+          {
+            echo "ACR_NAME=$ACR_NAME"
+            echo "CAE_NAME=$CAE_NAME"
+            echo "PG_SERVER=$PG_SERVER"
+            echo "PG_HOST=$PG_HOST"
+            echo "MANAGED_IDENTITY_ID=$MANAGED_IDENTITY_ID"
+            echo "MANAGED_IDENTITY_CLIENT_ID=$MANAGED_IDENTITY_CLIENT_ID"
+            echo "OPENAI_ENDPOINT=$OPENAI_ENDPOINT"
+            echo "OPENAI_DEPLOYMENT=$OPENAI_DEPLOYMENT"
+            echo "OPENAI_EMBEDDING_DEPLOYMENT=$OPENAI_EMBEDDING_DEPLOYMENT"
+          } >> "$GITHUB_ENV"
+
+      - name: Ensure PostgreSQL server is running
+        shell: bash
+        run: |
+          set -euo pipefail
+          STATE="$(az postgres flexible-server show --resource-group "$AZURE_RESOURCE_GROUP" --name "$PG_SERVER" --query "state" -o tsv)"
+          if [[ "$STATE" == "Stopped" ]]; then
+            az postgres flexible-server start --resource-group "$AZURE_RESOURCE_GROUP" --name "$PG_SERVER"
+          fi
+
+          for _ in {1..30}; do
+            STATE="$(az postgres flexible-server show --resource-group "$AZURE_RESOURCE_GROUP" --name "$PG_SERVER" --query "state" -o tsv)"
+            if [[ "$STATE" == "Ready" ]]; then
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "PostgreSQL server did not reach Ready state"
+          exit 1
+
+      - name: Recreate PR database
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if az postgres flexible-server db show --resource-group "$AZURE_RESOURCE_GROUP" --server-name "$PG_SERVER" --database-name "$STAGE_DB_NAME" >/dev/null 2>&1; then
+            az postgres flexible-server db delete --resource-group "$AZURE_RESOURCE_GROUP" --server-name "$PG_SERVER" --database-name "$STAGE_DB_NAME" --yes
+          fi
+
+          az postgres flexible-server db create --resource-group "$AZURE_RESOURCE_GROUP" --server-name "$PG_SERVER" --database-name "$STAGE_DB_NAME"
+
+      - name: Build and push image to ACR
+        shell: bash
+        run: |
+          set -euo pipefail
+          az acr build --registry "$ACR_NAME" --image "itemwise:${IMAGE_TAG}" .
+
+      - name: Recreate PR Container App
+        id: staging
+        shell: bash
+        env:
+          POSTGRES_ADMIN_PASSWORD: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$STAGE_APP_NAME" >/dev/null 2>&1; then
+            az containerapp delete --resource-group "$AZURE_RESOURCE_GROUP" --name "$STAGE_APP_NAME" --yes
+          fi
+
+          JWT_SECRET="$(python -c "import secrets; print(secrets.token_urlsafe(32))")"
+
+          az containerapp create \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --name "$STAGE_APP_NAME" \
+            --environment "$CAE_NAME" \
+            --image "${ACR_NAME}.azurecr.io/itemwise:${IMAGE_TAG}" \
+            --ingress external \
+            --target-port 8080 \
+            --min-replicas 0 \
+            --max-replicas 1 \
+            --cpu 0.5 \
+            --memory 1.0Gi \
+            --registry-server "${ACR_NAME}.azurecr.io" \
+            --registry-identity "$MANAGED_IDENTITY_ID" \
+            --user-assigned "$MANAGED_IDENTITY_ID" \
+            --secrets "postgres-password=$POSTGRES_ADMIN_PASSWORD" "jwt-secret=$JWT_SECRET" \
+            --env-vars \
+              POSTGRES_HOST="$PG_HOST" \
+              POSTGRES_PORT=5432 \
+              POSTGRES_USER=inventoryadmin \
+              POSTGRES_PASSWORD=secretref:postgres-password \
+              POSTGRES_DB="$STAGE_DB_NAME" \
+              AZURE_OPENAI_ENDPOINT="$OPENAI_ENDPOINT" \
+              AZURE_OPENAI_DEPLOYMENT="$OPENAI_DEPLOYMENT" \
+              AZURE_OPENAI_EMBEDDING_DEPLOYMENT="$OPENAI_EMBEDDING_DEPLOYMENT" \
+              AZURE_CLIENT_ID="$MANAGED_IDENTITY_CLIENT_ID" \
+              JWT_SECRET_KEY=secretref:jwt-secret \
+              DEBUG=false
+
+          FQDN="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$STAGE_APP_NAME" --query "properties.configuration.ingress.fqdn" -o tsv)"
+          if [[ -z "$FQDN" ]]; then
+            echo "Failed to resolve staging FQDN"
+            exit 1
+          fi
+
+          URL="https://$FQDN"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "STAGING_URL=$URL" >> "$GITHUB_ENV"
+
+      - name: Wait for staging health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          for _ in {1..30}; do
+            if curl -fsS "${STAGING_URL}/health" >/dev/null; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Staging app did not become healthy in time"
+          exit 1
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Install Playwright Chromium
+        run: uv run python -m playwright install --with-deps chromium
+
+      - name: Run E2E tests against staging
+        id: e2e
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          E2E_BASE_URL="${STAGING_URL}" uv run python -m pytest tests/test_e2e.py -v -m e2e --no-cov
+
+      - name: Post staging comment on PR
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          STAGING_URL: ${{ steps.staging.outputs.url }}
+          E2E_OUTCOME: ${{ steps.e2e.outcome }}
+        with:
+          script: |
+            const status = process.env.E2E_OUTCOME === "success" ? "✅ passed" : "❌ failed";
+            const body = [
+              "## PR Staging Environment",
+              "",
+              `- URL: ${process.env.STAGING_URL}`,
+              `- E2E: ${status}`,
+              "",
+              "_This environment is ephemeral and is deleted when the PR is closed._"
+            ].join("\n");
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const marker = "## PR Staging Environment";
+            const comments = await github.rest.issues.listComments({ owner, repo, issue_number, per_page: 100 });
+            const existing = comments.data.find(c => c.user?.type === "Bot" && c.body?.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+            } else {
+              await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            }
+
+      - name: Fail job when E2E fails
+        if: steps.e2e.outcome != 'success'
+        run: exit 1
+
+  cleanup:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Cleanup PR resources
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ACR_NAME="$(az acr list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].name" -o tsv)"
+          PG_SERVER="$(az postgres flexible-server list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].name" -o tsv)"
+
+          if az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$STAGE_APP_NAME" >/dev/null 2>&1; then
+            az containerapp delete --resource-group "$AZURE_RESOURCE_GROUP" --name "$STAGE_APP_NAME" --yes
+          fi
+
+          if [[ -n "$PG_SERVER" ]] && az postgres flexible-server db show --resource-group "$AZURE_RESOURCE_GROUP" --server-name "$PG_SERVER" --database-name "$STAGE_DB_NAME" >/dev/null 2>&1; then
+            az postgres flexible-server db delete --resource-group "$AZURE_RESOURCE_GROUP" --server-name "$PG_SERVER" --database-name "$STAGE_DB_NAME" --yes
+          fi
+
+          if [[ -n "$ACR_NAME" ]]; then
+            az acr repository delete --name "$ACR_NAME" --image "itemwise:${IMAGE_TAG}" --yes || true
+          fi
