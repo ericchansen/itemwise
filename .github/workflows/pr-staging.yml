@@ -47,20 +47,31 @@ jobs:
         run: |
           set -euo pipefail
 
+          az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
+          echo "Subscription: $(az account show --query '{name:name, id:id}' -o json)"
+
           ACR_NAME="$(az acr list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].name" -o tsv)"
+          echo "ACR_NAME=$ACR_NAME"
           CAE_NAME="$(az containerapp env list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].name" -o tsv)"
+          echo "CAE_NAME=$CAE_NAME"
           PG_SERVER="$(az postgres flexible-server list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].name" -o tsv)"
+          echo "PG_SERVER=$PG_SERVER"
           PG_HOST="$(az postgres flexible-server show --resource-group "$AZURE_RESOURCE_GROUP" --name "$PG_SERVER" --query "fullyQualifiedDomainName" -o tsv)"
+          echo "PG_HOST=$PG_HOST"
           MANAGED_IDENTITY_ID="$(az identity list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].id" -o tsv)"
           MANAGED_IDENTITY_CLIENT_ID="$(az identity list --resource-group "$AZURE_RESOURCE_GROUP" --query "[0].clientId" -o tsv)"
+          echo "MANAGED_IDENTITY_CLIENT_ID=$MANAGED_IDENTITY_CLIENT_ID"
           OPENAI_ENDPOINT="$(az cognitiveservices account list --resource-group "$AZURE_RESOURCE_GROUP" --query "[?kind=='OpenAI'][0].properties.endpoint" -o tsv)"
+          echo "OPENAI_ENDPOINT=$OPENAI_ENDPOINT"
           PROD_APP_NAME="$(az containerapp list --resource-group "$AZURE_RESOURCE_GROUP" --query "[?starts_with(name, 'ca-api-')][0].name" -o tsv)"
+          echo "PROD_APP_NAME=$PROD_APP_NAME"
 
           OPENAI_DEPLOYMENT="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$PROD_APP_NAME" --query "properties.template.containers[0].env[?name=='AZURE_OPENAI_DEPLOYMENT'].value | [0]" -o tsv)"
           OPENAI_EMBEDDING_DEPLOYMENT="$(az containerapp show --resource-group "$AZURE_RESOURCE_GROUP" --name "$PROD_APP_NAME" --query "properties.template.containers[0].env[?name=='AZURE_OPENAI_EMBEDDING_DEPLOYMENT'].value | [0]" -o tsv)"
 
           if [[ -z "$ACR_NAME" || -z "$CAE_NAME" || -z "$PG_SERVER" || -z "$PG_HOST" || -z "$MANAGED_IDENTITY_ID" || -z "$MANAGED_IDENTITY_CLIENT_ID" || -z "$OPENAI_ENDPOINT" ]]; then
             echo "Failed to discover shared infrastructure in $AZURE_RESOURCE_GROUP"
+            echo "ACR=$ACR_NAME CAE=$CAE_NAME PG=$PG_SERVER HOST=$PG_HOST ID=$MANAGED_IDENTITY_CLIENT_ID OAI=$OPENAI_ENDPOINT"
             exit 1
           fi
 
