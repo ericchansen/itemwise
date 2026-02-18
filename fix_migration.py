@@ -94,9 +94,18 @@ def fix_migration_state():
         print(f"Current alembic version: {version}")
 
         if version == "0001":
-            # Check if init_db already created new tables
-            if _has_table(conn, "inventories"):
-                print("Found tables from init_db at version 0001 — dropping for clean migration...")
+            # Check if init_db already created the schema matching latest models
+            if _has_table(conn, "inventories") and has_inventory_id:
+                # init_db created everything from models — stamp to latest migration
+                # before the last migration so it can apply cleanly
+                print("Schema created by init_db at version 0001 — stamping to latest base...")
+                conn.execute(
+                    text("UPDATE alembic_version SET version_num = '9b0a8afb6fae'")
+                )
+                conn.commit()
+                print("Stamped to 9b0a8afb6fae. Remaining migrations will run.")
+            elif _has_table(conn, "inventories"):
+                print("Found partial init_db tables at version 0001 — dropping for clean migration...")
                 _drop_new_tables(conn)
                 conn.commit()
                 print("Dropped stale tables. Migration will recreate them properly.")
