@@ -42,6 +42,36 @@ def page(browser_instance):
     context.close()
 
 
+def _delete_account(email: str, password: str):
+    """Delete a test account via API (best-effort)."""
+    import httpx
+
+    try:
+        r = httpx.post(
+            f"{BASE_URL}/api/auth/login",
+            data={"username": email, "password": password},
+            timeout=10,
+        )
+        if r.status_code != 200:
+            return
+        token = r.json()["access_token"]
+        httpx.delete(
+            f"{BASE_URL}/api/auth/account",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
+@pytest.fixture(scope="module", autouse=True)
+def cleanup_after_tests():
+    """Clean up test accounts after all E2E tests complete."""
+    yield
+    _delete_account(TEST_EMAIL, TEST_PASSWORD)
+    _delete_account(f"e2e-reg-{_ts}@test.com", TEST_PASSWORD)
+
+
 def _ensure_user_registered():
     """Register the test user via API (idempotent)."""
     import httpx

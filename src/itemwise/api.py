@@ -29,6 +29,7 @@ from .database.crud import (
     create_lot,
     create_user,
     delete_item,
+    delete_user,
     get_expiring_items,
     get_item,
     get_lots_for_item,
@@ -404,6 +405,20 @@ async def reset_password(body: ResetPasswordRequest):
         await session.commit()
 
     return {"message": "Password has been reset successfully"}
+
+
+@app.delete("/api/auth/account")
+@limiter.limit("5/hour")
+async def delete_account(
+    request: Request,
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+):
+    """Delete the currently authenticated user's account."""
+    async with AsyncSessionLocal() as session:
+        deleted = await delete_user(session, current_user.user_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="User not found")
+    return {"message": "Account deleted successfully"}
 
 
 # ===== Item Endpoints =====
