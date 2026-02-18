@@ -377,7 +377,7 @@ async def list_inventory(
         async with AsyncSessionLocal() as session:
             user_id, inventory_id = await _get_default_context(session)
 
-            items = await list_items(
+            items, _total = await list_items(
                 session,
                 inventory_id=inventory_id,
                 category=category,

@@ -102,9 +102,10 @@ class TestListItems:
         await create_item(db_session, test_inventory.id, "Item 2", 2, "vegetables")
         await create_item(db_session, test_inventory.id, "Item 3", 3, "meat")
 
-        items = await list_items(db_session, test_inventory.id)
+        items, total = await list_items(db_session, test_inventory.id)
 
         assert len(items) == 3
+        assert total == 3
 
     @pytest.mark.asyncio
     async def test_list_items_by_category(self, db_session: AsyncSession, test_user: User, test_inventory: Inventory) -> None:
@@ -113,9 +114,10 @@ class TestListItems:
         await create_item(db_session, test_inventory.id, "Peas", 2, "vegetables")
         await create_item(db_session, test_inventory.id, "Beef", 3, "meat")
 
-        meat_items = await list_items(db_session, test_inventory.id, category="meat")
+        meat_items, total = await list_items(db_session, test_inventory.id, category="meat")
 
         assert len(meat_items) == 2
+        assert total == 2
         assert all(item.category == "meat" for item in meat_items)
 
     @pytest.mark.asyncio
@@ -124,15 +126,17 @@ class TestListItems:
         for i in range(5):
             await create_item(db_session, test_inventory.id, f"Item {i}", i, "test")
 
-        items = await list_items(db_session, test_inventory.id, limit=3)
+        items, total = await list_items(db_session, test_inventory.id, limit=3)
 
         assert len(items) == 3
+        assert total == 5
 
     @pytest.mark.asyncio
     async def test_list_items_empty(self, db_session: AsyncSession, test_user: User, test_inventory: Inventory) -> None:
         """Test listing items when database is empty."""
-        items = await list_items(db_session, test_inventory.id)
+        items, total = await list_items(db_session, test_inventory.id)
         assert items == []
+        assert total == 0
 
 
 class TestUpdateItem:

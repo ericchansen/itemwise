@@ -51,10 +51,8 @@ from .database.crud import (
 from .database.engine import AsyncSessionLocal, close_db, init_db
 from .embeddings import generate_embedding
 from .auth import (
-    AccessTokenResponse,
     DUMMY_HASH,
     RefreshTokenRequest,
-    Token,
     TokenData,
     create_access_token,
     create_refresh_token,
@@ -173,6 +171,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Instrument with Azure Monitor if connection string is available
+try:
+    from azure.monitor.opentelemetry import configure_azure_monitor
+
+    if os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING"):
+        configure_azure_monitor()
+        logger.info("Azure Monitor OpenTelemetry instrumentation enabled")
+except ImportError:
+    pass
+
 # CORS configuration from environment
 _cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:8080,http://127.0.0.1:8080")
 ALLOWED_ORIGINS = [origin.strip() for origin in _cors_origins.split(",") if origin.strip()]
@@ -192,7 +200,21 @@ app.add_middleware(
 )
 
 # Rate limiting
-limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+def get_rate_limit_key(request: Request) -> str:
+    """Rate limit by user ID for authenticated requests, IP for anonymous."""
+    token = request.cookies.get("access_token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if token:
+        token_data = decode_access_token(token)
+        if token_data and token_data.user_id:
+            return f"user:{token_data.user_id}"
+    return get_remote_address(request)
+
+
+limiter = Limiter(key_func=get_rate_limit_key, default_limits=["60/minute"])
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
 
@@ -238,24 +260,35 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=F
 
 
 async def get_current_user(
-    token: Annotated[str | None, Depends(oauth2_scheme)]
+    request: Request,
+    token: Annotated[str | None, Depends(oauth2_scheme)],
 ) -> TokenData:
-    """Dependency to get the current authenticated user from JWT token."""
-    if token is None:
+    """Dependency to get the current authenticated user from JWT token.
+
+    Checks the ``access_token`` cookie first, then falls back to the
+    ``Authorization: Bearer`` header so API clients and tests keep working.
+    """
+    # Cookie takes priority
+    resolved_token = request.cookies.get("access_token")
+    # Fall back to Authorization header (set by OAuth2 scheme)
+    if not resolved_token:
+        resolved_token = token
+
+    if resolved_token is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    token_data = decode_access_token(token)
+
+    token_data = decode_access_token(resolved_token)
     if token_data is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     return token_data
 
 
@@ -284,8 +317,21 @@ async def get_active_inventory_id(
 # ===== Auth Endpoints =====
 
 
-@api_router.post("/auth/register", response_model=Token, status_code=status.HTTP_201_CREATED)
-@limiter.limit("5/minute")
+def _set_token_cookie(response: JSONResponse, token: str, *, secure: bool) -> None:
+    """Set the ``access_token`` HTTP-only cookie on *response*."""
+    response.set_cookie(
+        key="access_token",
+        value=token,
+        httponly=True,
+        samesite="strict",
+        secure=secure,
+        max_age=1800,  # 30 min
+        path="/",
+    )
+
+
+@api_router.post("/auth/register", status_code=status.HTTP_201_CREATED)
+@limiter.limit("5/minute", key_func=get_remote_address)
 async def register(request: Request, user_data: UserRegister):
     """Register a new user account.
 
@@ -305,13 +351,18 @@ async def register(request: Request, user_data: UserRegister):
             raise HTTPException(status_code=400, detail="Email already registered")
 
         access_token = create_access_token(user.id, user.email)
-        refresh_token = create_refresh_token(user.id, user.email)
+        refresh_tok = create_refresh_token(user.id, user.email)
 
-        return Token(access_token=access_token, refresh_token=refresh_token)
+        response = JSONResponse(
+            content={"access_token": access_token, "refresh_token": refresh_tok, "token_type": "bearer"},
+            status_code=status.HTTP_201_CREATED,
+        )
+        _set_token_cookie(response, access_token, secure=request.url.scheme == "https")
+        return response
 
 
-@api_router.post("/auth/login", response_model=Token)
-@limiter.limit("10/minute")
+@api_router.post("/auth/login")
+@limiter.limit("10/minute", key_func=get_remote_address)
 async def login(request: Request, form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
     """Login and get access/refresh tokens.
 
@@ -332,15 +383,19 @@ async def login(request: Request, form_data: Annotated[OAuth2PasswordRequestForm
             )
         
         access_token = create_access_token(user.id, user.email)
-        refresh_token = create_refresh_token(user.id, user.email)
-        
-        return Token(access_token=access_token, refresh_token=refresh_token)
+        refresh_tok = create_refresh_token(user.id, user.email)
+
+        response = JSONResponse(
+            content={"access_token": access_token, "refresh_token": refresh_tok, "token_type": "bearer"},
+        )
+        _set_token_cookie(response, access_token, secure=request.url.scheme == "https")
+        return response
 
 
-@api_router.post("/auth/refresh", response_model=AccessTokenResponse)
-async def refresh_token(request: RefreshTokenRequest):
+@api_router.post("/auth/refresh")
+async def refresh_token(request: Request, body: RefreshTokenRequest):
     """Get a new access token using a refresh token."""
-    token_data = decode_refresh_token(request.refresh_token)
+    token_data = decode_refresh_token(body.refresh_token)
     if token_data is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -349,7 +404,11 @@ async def refresh_token(request: RefreshTokenRequest):
         )
     
     access_token = create_access_token(token_data.user_id, token_data.email)
-    return AccessTokenResponse(access_token=access_token)
+    response = JSONResponse(
+        content={"access_token": access_token, "token_type": "bearer"},
+    )
+    _set_token_cookie(response, access_token, secure=request.url.scheme == "https")
+    return response
 
 
 @api_router.get("/auth/me")
@@ -361,6 +420,14 @@ async def get_current_user_info(
         "user_id": current_user.user_id,
         "email": current_user.email,
     }
+
+
+@api_router.post("/auth/logout")
+async def logout():
+    """Log out by clearing the access_token cookie."""
+    response = JSONResponse(content={"message": "Logged out"})
+    response.delete_cookie(key="access_token", path="/")
+    return response
 
 
 @api_router.put("/auth/password")
@@ -432,7 +499,9 @@ async def delete_account(
         deleted = await delete_user(session, current_user.user_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="User not found")
-    return {"message": "Account deleted successfully"}
+    response = JSONResponse(content={"message": "Account deleted successfully"})
+    response.delete_cookie(key="access_token", path="/")
+    return response
 
 
 # ===== Item Endpoints =====
@@ -444,17 +513,24 @@ async def get_items(
     inventory_id: Annotated[int, Depends(get_active_inventory_id)],
     category: Optional[str] = Query(None, description="Filter by category"),
     location: Optional[str] = Query(None, description="Filter by location name"),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ):
-    """List all inventory items with optional filters."""
+    """List all inventory items with optional filters and pagination."""
     async with AsyncSessionLocal() as session:
-        items = await list_items(
+        items, total = await list_items(
             session,
             inventory_id=inventory_id,
             category=category,
             location_name=location,
+            limit=limit,
+            offset=offset,
         )
         return {
             "count": len(items),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
             "items": [
                 {
                     "id": item.id,

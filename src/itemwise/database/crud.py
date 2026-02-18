@@ -454,8 +454,9 @@ async def list_items(
     location_id: Optional[int] = None,
     location_name: Optional[str] = None,
     limit: int = 100,
-) -> list[InventoryItem]:
-    """List inventory items with optional filtering.
+    offset: int = 0,
+) -> tuple[list[InventoryItem], int]:
+    """List inventory items with optional filtering and pagination.
 
     Args:
         session: Database session
@@ -464,26 +465,32 @@ async def list_items(
         location_id: Optional location ID filter
         location_name: Optional location name filter (case-insensitive)
         limit: Maximum number of items to return
+        offset: Number of items to skip
 
     Returns:
-        List of inventory items in the inventory
+        Tuple of (list of inventory items, total count matching filters)
     """
-    query = select(InventoryItem).options(selectinload(InventoryItem.location)).where(InventoryItem.inventory_id == inventory_id)
+    base_filter = select(InventoryItem).where(InventoryItem.inventory_id == inventory_id)
 
     if category:
-        query = query.where(InventoryItem.category == category)
+        base_filter = base_filter.where(InventoryItem.category == category)
 
     if location_id:
-        query = query.where(InventoryItem.location_id == location_id)
+        base_filter = base_filter.where(InventoryItem.location_id == location_id)
 
     if location_name:
         normalized = normalize_location_name(location_name)
-        query = query.join(Location).where(Location.normalized_name.contains(normalized))
+        base_filter = base_filter.join(Location).where(Location.normalized_name.contains(normalized))
 
-    query = query.order_by(InventoryItem.created_at.desc()).limit(limit)
+    # Total count
+    count_q = select(func.count()).select_from(base_filter.subquery())
+    total = (await session.execute(count_q)).scalar() or 0
+
+    # Items query with pagination
+    query = base_filter.options(selectinload(InventoryItem.location)).order_by(InventoryItem.created_at.desc()).limit(limit).offset(offset)
 
     result = await session.execute(query)
-    return list(result.scalars().all())
+    return list(result.scalars().all()), total
 
 
 async def update_item(

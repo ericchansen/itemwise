@@ -43,6 +43,15 @@
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 3px; }
+        .loading { opacity: 0.6; pointer-events: none; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        .pulsing { animation: pulse 1.5s ease-in-out infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
+        .alert-banner { transition: opacity 0.3s ease, transform 0.3s ease; opacity: 1; transform: translateY(0); }
+        .alert-banner.hiding { opacity: 0; transform: translateY(-8px); }
+        .alert-close { cursor: pointer; margin-left: 8px; font-size: 1.1em; line-height: 1; opacity: 0.7; }
+        .alert-close:hover { opacity: 1; }
     </style>
 </head>
 <body class="bg-bg text-white min-h-screen">
@@ -150,7 +159,7 @@
                             class="w-full px-4 py-3 bg-surface border border-border rounded-xl text-white placeholder-muted focus:border-accent transition-all pr-12"
                             autocomplete="off"
                         >
-                        <button type="submit" class="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-muted hover:text-white transition-colors">
+                        <button type="submit" id="chat-send-btn" class="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-muted hover:text-white transition-colors">
                             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M12 5l7 7-7 7"/>
                             </svg>
@@ -171,7 +180,7 @@
                     class="flex-1 px-4 py-2.5 bg-surface border border-border rounded-lg text-white placeholder-muted"
                     onkeyup="debounceSearch()"
                 >
-                <select id="location-filter" class="px-4 py-2.5 bg-surface border border-border rounded-lg text-muted" onchange="loadInventory()">
+                <select id="location-filter" class="px-4 py-2.5 bg-surface border border-border rounded-lg text-muted" onchange="currentOffset=0; loadInventory()">>
                     <option value="">All locations</option>
                 </select>
                 <button onclick="showAddItemModal()" class="px-4 py-2.5 bg-white text-black rounded-lg font-medium hover:bg-white/90 transition-all">
@@ -181,6 +190,15 @@
 
             <!-- Items -->
             <div id="items-list" class="space-y-2"></div>
+
+            <!-- Pagination -->
+            <div id="pagination-controls" class="hidden flex items-center justify-between mt-4 text-sm text-muted">
+                <span id="pagination-info"></span>
+                <div class="flex gap-2">
+                    <button id="prev-btn" onclick="prevPage()" class="px-3 py-1.5 bg-surface border border-border rounded-lg hover:border-muted transition-all disabled:opacity-40 disabled:cursor-not-allowed">Previous</button>
+                    <button id="next-btn" onclick="nextPage()" class="px-3 py-1.5 bg-surface border border-border rounded-lg hover:border-muted transition-all disabled:opacity-40 disabled:cursor-not-allowed">Next</button>
+                </div>
+            </div>
 
             <!-- Empty -->
             <div id="empty-state" class="hidden py-20 text-center">
@@ -264,26 +282,37 @@
         let searchTimeout;
         let authMode = 'login';
         let activeInventoryId = null;
+        let currentOffset = 0;
+        const PAGE_SIZE = 50;
 
         // ===== Auth =====
-        function getToken() { return localStorage.getItem('token'); }
-        function getRefreshToken() { return localStorage.getItem('refreshToken'); }
-        function authHeaders() {
-            const t = getToken();
-            return t ? { 'Authorization': `Bearer ${t}` } : {};
+
+        function showAlert(el, msg, autoDismissMs = 8000) {
+            el.innerHTML = `<span>${msg}</span><span class="alert-close" onclick="dismissAlert(this.parentElement)">&times;</span>`;
+            el.classList.remove('hidden', 'hiding');
+            el.classList.add('alert-banner');
+            clearTimeout(el._dismissTimer);
+            if (autoDismissMs > 0) {
+                el._dismissTimer = setTimeout(() => dismissAlert(el), autoDismissMs);
+            }
         }
 
+        function dismissAlert(el) {
+            clearTimeout(el._dismissTimer);
+            el.classList.add('hiding');
+            setTimeout(() => { el.classList.add('hidden'); el.classList.remove('hiding', 'alert-banner'); }, 300);
+        }
+        function getRefreshToken() { return localStorage.getItem('refreshToken'); }
+
         async function authFetch(url, opts = {}) {
-            opts.headers = { ...opts.headers, ...authHeaders() };
+            opts.credentials = 'include';
             if (activeInventoryId) {
-                opts.headers['X-Inventory-Id'] = activeInventoryId.toString();
+                opts.headers = { ...opts.headers, 'X-Inventory-Id': activeInventoryId.toString() };
             }
             let res = await fetch(url, opts);
             if (res.status === 401 && getRefreshToken()) {
                 const refreshed = await tryRefresh();
                 if (refreshed) {
-                    opts.headers = { ...opts.headers, ...authHeaders() };
-                    if (activeInventoryId) opts.headers['X-Inventory-Id'] = activeInventoryId.toString();
                     res = await fetch(url, opts);
                 } else { logout(); }
             }
@@ -295,12 +324,11 @@
             try {
                 const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
                     method: 'POST',
+                    credentials: 'include',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ refresh_token: getRefreshToken() })
                 });
                 if (!res.ok) return false;
-                const data = await res.json();
-                localStorage.setItem('token', data.access_token);
                 return true;
             } catch { return false; }
         }
@@ -322,13 +350,18 @@
             const email = document.getElementById('auth-email').value;
             const password = document.getElementById('auth-password').value;
             const errorEl = document.getElementById('auth-error');
+            const submitBtn = document.getElementById('auth-submit');
+            const origText = submitBtn.textContent;
             errorEl.classList.add('hidden');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Loading...';
 
             try {
                 let res;
                 if (authMode === 'register') {
                     res = await fetch(`${API_URL}/api/v1/auth/register`, {
                         method: 'POST',
+                        credentials: 'include',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ email, password })
                     });
@@ -338,6 +371,7 @@
                     formData.append('password', password);
                     res = await fetch(`${API_URL}/api/v1/auth/login`, {
                         method: 'POST',
+                        credentials: 'include',
                         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                         body: formData
                     });
@@ -345,23 +379,23 @@
 
                 if (!res.ok) {
                     const err = await res.json();
-                    errorEl.textContent = err.detail || 'Authentication failed';
-                    errorEl.classList.remove('hidden');
+                    showAlert(errorEl, err.detail || 'Authentication failed');
                     return;
                 }
 
                 const data = await res.json();
-                localStorage.setItem('token', data.access_token);
                 localStorage.setItem('refreshToken', data.refresh_token);
                 showApp();
             } catch {
-                errorEl.textContent = 'Connection error';
-                errorEl.classList.remove('hidden');
+                showAlert(errorEl, 'Connection error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = origText;
             }
         }
 
         function logout() {
-            localStorage.removeItem('token');
+            fetch(`${API_URL}/api/v1/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {});
             localStorage.removeItem('refreshToken');
             activeInventoryId = null;
             // Clear DOM state
@@ -419,8 +453,11 @@
             const email = document.getElementById('forgot-email').value;
             const errorEl = document.getElementById('forgot-error');
             const successEl = document.getElementById('forgot-success');
+            const submitBtn = e.target.querySelector('button[type="submit"]');
             errorEl.classList.add('hidden');
             successEl.classList.add('hidden');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Sending...';
             try {
                 const res = await fetch(`${API_URL}/api/v1/auth/forgot-password`, {
                     method: 'POST',
@@ -428,11 +465,12 @@
                     body: JSON.stringify({ email })
                 });
                 const data = await res.json();
-                successEl.textContent = 'If an account exists with that email, a reset link has been sent.';
-                successEl.classList.remove('hidden');
+                showAlert(successEl, 'If an account exists with that email, a reset link has been sent.');
             } catch {
-                errorEl.textContent = 'Connection error. Please try again.';
-                errorEl.classList.remove('hidden');
+                showAlert(errorEl, 'Connection error. Please try again.');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Send Reset Link';
             }
         }
 
@@ -441,14 +479,16 @@
             const password = document.getElementById('reset-password').value;
             const confirm = document.getElementById('reset-password-confirm').value;
             const errorEl = document.getElementById('reset-error');
+            const submitBtn = e.target.querySelector('button[type="submit"]');
             errorEl.classList.add('hidden');
             if (password !== confirm) {
-                errorEl.textContent = 'Passwords do not match';
-                errorEl.classList.remove('hidden');
+                showAlert(errorEl, 'Passwords do not match');
                 return;
             }
             const params = new URLSearchParams(window.location.search);
             const token = params.get('reset_token');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Resetting...';
             try {
                 const res = await fetch(`${API_URL}/api/v1/auth/reset-password`, {
                     method: 'POST',
@@ -457,19 +497,19 @@
                 });
                 if (!res.ok) {
                     const err = await res.json();
-                    errorEl.textContent = err.detail || 'Reset failed';
-                    errorEl.classList.remove('hidden');
+                    showAlert(errorEl, err.detail || 'Reset failed');
                     return;
                 }
                 window.history.replaceState({}, '', window.location.pathname);
                 document.getElementById('auth-reset-password').classList.add('hidden');
                 document.getElementById('auth-login-register').classList.remove('hidden');
                 const successEl = document.getElementById('auth-success');
-                successEl.textContent = 'Password reset successfully. Please log in.';
-                successEl.classList.remove('hidden');
+                showAlert(successEl, 'Password reset successfully. Please log in.');
             } catch {
-                errorEl.textContent = 'Connection error. Please try again.';
-                errorEl.classList.remove('hidden');
+                showAlert(errorEl, 'Connection error. Please try again.');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Reset Password';
             }
         }
 
@@ -478,7 +518,12 @@
         if (urlParams.has('reset_token')) {
             showAuthScreen();
             showResetPasswordForm();
-        } else if (getToken()) { showApp(); } else { showAuthScreen(); }
+        } else {
+            // Check auth status via cookie
+            fetch(`${API_URL}/api/v1/auth/me`, { credentials: 'include' })
+                .then(r => { if (r.ok) showApp(); else showAuthScreen(); })
+                .catch(() => showAuthScreen());
+        }
 
         function showTab(tab) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
@@ -522,8 +567,13 @@
 
         async function sendMessage(text) {
             if (!text.trim()) return;
+            const sendBtn = document.getElementById('chat-send-btn');
+            const chatInput = document.getElementById('chat-input');
+            sendBtn.disabled = true;
+            sendBtn.innerHTML = '<span class="spinner"></span>';
+            chatInput.disabled = true;
             addMessage(text, true);
-            document.getElementById('chat-input').value = '';
+            chatInput.value = '';
             try {
                 const res = await authFetch(`${API_URL}/api/v1/chat`, {
                     method: 'POST',
@@ -534,6 +584,11 @@
                 addMessage(data.response.replace(/\n/g, '<br>'));
             } catch (e) {
                 if (e.message !== 'Unauthorized') addMessage('Connection error. Try again.');
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M12 5l7 7-7 7"/></svg>';
+                chatInput.disabled = false;
+                chatInput.focus();
             }
         }
 
@@ -545,17 +600,28 @@
         async function loadInventory() {
             const search = document.getElementById('search-input').value;
             const location = document.getElementById('location-filter').value;
-            let url = search ? `${API_URL}/api/v1/search?q=${encodeURIComponent(search)}` : `${API_URL}/api/v1/items?`;
-            if (location) url += `${search ? '&' : ''}location=${encodeURIComponent(location)}`;
+            let url;
+            if (search) {
+                url = `${API_URL}/api/v1/search?q=${encodeURIComponent(search)}`;
+                if (location) url += `&location=${encodeURIComponent(location)}`;
+            } else {
+                url = `${API_URL}/api/v1/items?limit=${PAGE_SIZE}&offset=${currentOffset}`;
+                if (location) url += `&location=${encodeURIComponent(location)}`;
+            }
             
+            const list = document.getElementById('items-list');
+            const empty = document.getElementById('empty-state');
+            const pagination = document.getElementById('pagination-controls');
+            list.innerHTML = '<div class="py-12 text-center pulsing"><span class="text-muted text-sm">Loading items...</span></div>';
+            empty.classList.add('hidden');
+            pagination.classList.add('hidden');
+
             try {
                 const res = await authFetch(url);
                 const data = await res.json();
                 const items = data.items || data.results || [];
-                const list = document.getElementById('items-list');
-                const empty = document.getElementById('empty-state');
                 
-                if (!items.length) { list.innerHTML = ''; empty.classList.remove('hidden'); return; }
+                if (!items.length && currentOffset === 0) { list.innerHTML = ''; empty.classList.remove('hidden'); return; }
                 empty.classList.add('hidden');
                 
                 list.innerHTML = items.map(item => `
@@ -572,7 +638,27 @@
                         </button>
                     </div>
                 `).join('');
-            } catch (e) { console.error(e); }
+
+                // Show pagination for non-search results
+                if (!search && data.total != null) {
+                    const start = currentOffset + 1;
+                    const end = Math.min(currentOffset + items.length, data.total);
+                    document.getElementById('pagination-info').textContent = `Showing ${start}–${end} of ${data.total} items`;
+                    document.getElementById('prev-btn').disabled = currentOffset === 0;
+                    document.getElementById('next-btn').disabled = currentOffset + PAGE_SIZE >= data.total;
+                    pagination.classList.remove('hidden');
+                }
+            } catch (e) { list.innerHTML = ''; console.error(e); }
+        }
+
+        function prevPage() {
+            currentOffset = Math.max(0, currentOffset - PAGE_SIZE);
+            loadInventory();
+        }
+
+        function nextPage() {
+            currentOffset += PAGE_SIZE;
+            loadInventory();
         }
 
         async function loadLocations() {
@@ -611,6 +697,7 @@
 
         function switchInventory() {
             activeInventoryId = parseInt(document.getElementById('inventory-selector').value);
+            currentOffset = 0;
             loadInventory();
             loadLocations();
         }
@@ -628,6 +715,7 @@
             const fb = document.getElementById('password-feedback');
             const newPw = document.getElementById('new-password').value;
             const confirmPw = document.getElementById('confirm-password').value;
+            const submitBtn = event.target.querySelector('button[type="submit"]');
 
             if (newPw !== confirmPw) {
                 fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
@@ -635,6 +723,8 @@
                 return;
             }
 
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Saving...';
             try {
                 const res = await authFetch(`${API_URL}/api/v1/auth/password`, {
                     method: 'PUT',
@@ -656,6 +746,9 @@
             } catch(e) {
                 fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
                 fb.textContent = 'Network error';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Update Password';
             }
         }
 
@@ -677,6 +770,7 @@
             e.preventDefault();
             const email = document.getElementById('member-email').value;
             const fb = document.getElementById('member-feedback');
+            const submitBtn = e.target.querySelector('button[type="submit"]');
             if (!activeInventoryId) {
                 await loadInventories();
                 if (!activeInventoryId) {
@@ -686,6 +780,8 @@
                     return;
                 }
             }
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Inviting...';
             try {
                 const res = await authFetch(`${API_URL}/api/v1/inventories/${activeInventoryId}/members`, {
                     method: 'POST',
@@ -721,6 +817,9 @@
                 fb.textContent = 'Connection error';
                 fb.className = 'mt-3 px-4 py-2.5 rounded-lg text-sm bg-red-500/10 border border-red-500/20 text-red-400';
                 fb.classList.remove('hidden');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Invite';
             }
         }
 
@@ -756,6 +855,7 @@
 
         function debounceSearch() {
             clearTimeout(searchTimeout);
+            currentOffset = 0;
             searchTimeout = setTimeout(loadInventory, 300);
         }
 
@@ -775,6 +875,7 @@
 
         async function handleAddItem(e) {
             e.preventDefault();
+            const submitBtn = e.target.querySelector('button[type="submit"]');
             const item = {
                 name: document.getElementById('item-name').value,
                 quantity: parseInt(document.getElementById('item-quantity').value),
@@ -782,6 +883,8 @@
                 location: document.getElementById('item-location').value || null,
                 description: document.getElementById('item-description').value || null
             };
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Adding...';
             try {
                 const res = await authFetch(`${API_URL}/api/v1/items`, {
                     method: 'POST',
@@ -789,7 +892,11 @@
                     body: JSON.stringify(item)
                 });
                 if (res.ok) { hideAddItemModal(); loadInventory(); loadLocations(); }
-            } catch (e) {}
+            } catch (e) {
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Add';
+            }
         }
 
         async function deleteItem(id) {

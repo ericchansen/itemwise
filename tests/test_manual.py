@@ -51,7 +51,7 @@ async def test_inventory() -> None:
 
     print("\n2. Listing all items...")
     async with AsyncSessionLocal() as session:
-        items = await list_items(session, user_id=user_id)
+        items, _total = await list_items(session, user_id=user_id)
         print(f"   Total items: {len(items)}")
         for item in items:
             print(f"   - {item.name}: {item.quantity} ({item.category})")
