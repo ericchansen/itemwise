@@ -827,6 +827,7 @@ async def create_lot(
     added_by_user_id: Optional[int] = None,
     notes: Optional[str] = None,
     expiration_date: Optional[date] = None,
+    inventory_id: Optional[int] = None,
 ) -> ItemLot:
     """Create a new lot for an inventory item.
 
@@ -839,16 +840,20 @@ async def create_lot(
         added_by_user_id: Optional ID of the user who added the lot
         notes: Optional notes about the lot
         expiration_date: Optional expiration date for this lot
+        inventory_id: If provided, validates the item belongs to this inventory
 
     Returns:
         The created item lot
     """
     # Get the parent item and update its quantity
-    result = await session.execute(
-        select(InventoryItem).where(InventoryItem.id == item_id)
-    )
+    query = select(InventoryItem).where(InventoryItem.id == item_id)
+    if inventory_id is not None:
+        query = query.where(InventoryItem.inventory_id == inventory_id)
+    result = await session.execute(query)
     item = result.scalar_one_or_none()
     if item is None:
+        if inventory_id is not None:
+            raise ValueError(f"Item with id={item_id} not found in inventory {inventory_id}")
         raise ValueError(f"Item with id={item_id} not found")
 
     lot = ItemLot(

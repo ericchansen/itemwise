@@ -1,5 +1,6 @@
 """FastAPI REST API for inventory management."""
 
+import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -7,16 +8,17 @@ from pathlib import Path
 from typing import Annotated, Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+import openai
 from pydantic import BaseModel, EmailStr, Field
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy import text
 
 # Load environment variables from .env file (find it relative to this file)
@@ -212,15 +214,27 @@ async def health_check():
     try:
         async with AsyncSessionLocal() as session:
             await session.execute(text("SELECT 1"))
-        return {"status": "healthy", "service": "itemwise-api", "database": "connected"}
-    except Exception as e:
+        return {
+            "status": "healthy",
+            "dependencies": {"database": "healthy"},
+        }
+    except (SQLAlchemyError, OSError) as e:
         logger.error(f"Health check failed: {e}")
-        return {"status": "unhealthy", "service": "itemwise-api", "database": "disconnected"}
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "dependencies": {"database": "unhealthy"},
+            },
+        )
 
 
 # ===== Authentication =====
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login", auto_error=False)
+# API router for versioned endpoints — mounted at both /api and /api/v1
+api_router = APIRouter()
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 
 async def get_current_user(
@@ -270,7 +284,7 @@ async def get_active_inventory_id(
 # ===== Auth Endpoints =====
 
 
-@app.post("/api/auth/register", response_model=Token, status_code=status.HTTP_201_CREATED)
+@api_router.post("/auth/register", response_model=Token, status_code=status.HTTP_201_CREATED)
 @limiter.limit("5/minute")
 async def register(request: Request, user_data: UserRegister):
     """Register a new user account.
@@ -296,7 +310,7 @@ async def register(request: Request, user_data: UserRegister):
         return Token(access_token=access_token, refresh_token=refresh_token)
 
 
-@app.post("/api/auth/login", response_model=Token)
+@api_router.post("/auth/login", response_model=Token)
 @limiter.limit("10/minute")
 async def login(request: Request, form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
     """Login and get access/refresh tokens.
@@ -323,7 +337,7 @@ async def login(request: Request, form_data: Annotated[OAuth2PasswordRequestForm
         return Token(access_token=access_token, refresh_token=refresh_token)
 
 
-@app.post("/api/auth/refresh", response_model=AccessTokenResponse)
+@api_router.post("/auth/refresh", response_model=AccessTokenResponse)
 async def refresh_token(request: RefreshTokenRequest):
     """Get a new access token using a refresh token."""
     token_data = decode_refresh_token(request.refresh_token)
@@ -338,7 +352,7 @@ async def refresh_token(request: RefreshTokenRequest):
     return AccessTokenResponse(access_token=access_token)
 
 
-@app.get("/api/auth/me")
+@api_router.get("/auth/me")
 async def get_current_user_info(
     current_user: Annotated[TokenData, Depends(get_current_user)]
 ):
@@ -349,7 +363,7 @@ async def get_current_user_info(
     }
 
 
-@app.put("/api/auth/password")
+@api_router.put("/auth/password")
 async def change_password(
     body: ChangePasswordRequest,
     current_user: Annotated[TokenData, Depends(get_current_user)],
@@ -370,7 +384,7 @@ async def change_password(
     return {"message": "Password updated successfully"}
 
 
-@app.post("/api/auth/forgot-password")
+@api_router.post("/auth/forgot-password")
 async def forgot_password(body: ForgotPasswordRequest):
     """Request a password reset email.
 
@@ -386,7 +400,7 @@ async def forgot_password(body: ForgotPasswordRequest):
     return {"message": "If an account exists with that email, a reset link has been sent."}
 
 
-@app.post("/api/auth/reset-password")
+@api_router.post("/auth/reset-password")
 async def reset_password(body: ResetPasswordRequest):
     """Reset password using a valid reset token."""
     email = verify_reset_token(body.token)
@@ -407,7 +421,7 @@ async def reset_password(body: ResetPasswordRequest):
     return {"message": "Password has been reset successfully"}
 
 
-@app.delete("/api/auth/account")
+@api_router.delete("/auth/account")
 @limiter.limit("5/hour")
 async def delete_account(
     request: Request,
@@ -424,7 +438,7 @@ async def delete_account(
 # ===== Item Endpoints =====
 
 
-@app.get("/api/items")
+@api_router.get("/items")
 async def get_items(
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inventory_id: Annotated[int, Depends(get_active_inventory_id)],
@@ -456,7 +470,7 @@ async def get_items(
         }
 
 
-@app.post("/api/items")
+@api_router.post("/items")
 async def create_new_item(
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inventory_id: Annotated[int, Depends(get_active_inventory_id)],
@@ -514,7 +528,7 @@ async def create_new_item(
         }
 
 
-@app.get("/api/items/expiring")
+@api_router.get("/items/expiring")
 async def get_expiring_items_endpoint(
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inventory_id: Annotated[int, Depends(get_active_inventory_id)],
@@ -530,7 +544,7 @@ async def get_expiring_items_endpoint(
         }
 
 
-@app.post("/api/notifications/expiration-digest")
+@api_router.post("/notifications/expiration-digest")
 async def send_expiration_digest(
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inventory_id: Annotated[int, Depends(get_active_inventory_id)],
@@ -549,7 +563,7 @@ async def send_expiration_digest(
         return {"status": "sent", "item_count": len(items)}
 
 
-@app.get("/api/items/{item_id}")
+@api_router.get("/items/{item_id}")
 async def get_single_item(
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inventory_id: Annotated[int, Depends(get_active_inventory_id)],
@@ -571,7 +585,7 @@ async def get_single_item(
         }
 
 
-@app.put("/api/items/{item_id}")
+@api_router.put("/items/{item_id}")
 async def update_existing_item(
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inventory_id: Annotated[int, Depends(get_active_inventory_id)],
@@ -635,7 +649,7 @@ async def update_existing_item(
         }
 
 
-@app.delete("/api/items/{item_id}")
+@api_router.delete("/items/{item_id}")
 async def delete_existing_item(
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inventory_id: Annotated[int, Depends(get_active_inventory_id)],
@@ -670,7 +684,7 @@ async def delete_existing_item(
 # ===== Search Endpoint =====
 
 
-@app.get("/api/search")
+@api_router.get("/search")
 async def search_items(
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inventory_id: Annotated[int, Depends(get_active_inventory_id)],
@@ -741,7 +755,7 @@ async def search_items(
 # ===== Location Endpoints =====
 
 
-@app.get("/api/locations")
+@api_router.get("/locations")
 async def get_all_locations(
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inventory_id: Annotated[int, Depends(get_active_inventory_id)],
@@ -762,7 +776,7 @@ async def get_all_locations(
         }
 
 
-@app.post("/api/locations")
+@api_router.post("/locations")
 async def create_new_location(
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inventory_id: Annotated[int, Depends(get_active_inventory_id)],
@@ -802,7 +816,7 @@ async def create_new_location(
 # ===== Inventory Sharing Endpoints =====
 
 
-@app.get("/api/inventories")
+@api_router.get("/inventories")
 async def get_inventories(
     current_user: Annotated[TokenData, Depends(get_current_user)],
 ):
@@ -824,7 +838,7 @@ async def get_inventories(
         }
 
 
-@app.get("/api/inventories/{inv_id}/members")
+@api_router.get("/inventories/{inv_id}/members")
 async def get_inventory_members(
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inv_id: int,
@@ -853,7 +867,7 @@ class AddMemberRequest(BaseModel):
     email: EmailStr
 
 
-@app.post("/api/inventories/{inv_id}/members")
+@api_router.post("/inventories/{inv_id}/members")
 async def add_inventory_member_endpoint(
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inv_id: int,
@@ -902,7 +916,7 @@ async def add_inventory_member_endpoint(
             }
 
 
-@app.delete("/api/inventories/{inv_id}/members/{member_user_id}")
+@api_router.delete("/inventories/{inv_id}/members/{member_user_id}")
 async def remove_inventory_member_endpoint(
     current_user: Annotated[TokenData, Depends(get_current_user)],
     inv_id: int,
@@ -922,7 +936,7 @@ async def remove_inventory_member_endpoint(
 # ===== Chat Endpoint =====
 
 
-@app.post("/api/chat", response_model=ChatResponse)
+@api_router.post("/chat", response_model=ChatResponse)
 @limiter.limit("20/minute")
 async def chat(
     request: Request,
@@ -959,7 +973,7 @@ async def _chat_with_ai(user_message: str, user_id: int, inventory_id: int) -> C
             try:
                 display_name = generate_display_name(location.strip())
                 logger.info(f"Generated display name: '{location}' -> '{display_name}'")
-            except Exception as e:
+            except (ValueError, AttributeError) as e:
                 logger.warning(f"Failed to generate display name: {e}")
             
             # Get or create location
@@ -1143,7 +1157,7 @@ async def _chat_with_ai(user_message: str, user_id: int, inventory_id: int) -> C
     try:
         response_text = await process_chat_with_tools(user_message, tool_handlers)
         return ChatResponse(response=response_text, action="ai_response")
-    except Exception as e:
+    except (openai.OpenAIError, ValueError, json.JSONDecodeError) as e:
         logger.exception("AI chat error")
         error_str = str(e)
         if "DefaultAzureCredential" in error_str or "authentication" in error_str.lower():
@@ -1234,6 +1248,11 @@ async def _chat_fallback(user_message: str, inventory_id: int) -> ChatResponse:
                 "Note: Azure OpenAI is not configured. Set AZURE_OPENAI_ENDPOINT to enable "
                 "full natural language understanding including adding/removing items.",
             )
+
+
+# ===== Mount API router at both /api (backward compat) and /api/v1 =====
+app.include_router(api_router, prefix="/api/v1")
+app.include_router(api_router, prefix="/api")
 
 
 # ===== Frontend Serving =====

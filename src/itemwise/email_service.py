@@ -2,6 +2,7 @@
 
 import logging
 from azure.communication.email import EmailClient
+from azure.core.exceptions import AzureError
 from .config import settings
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ def _send_email(to_email: str, subject: str, html_body: str) -> bool:
         result = poller.result()
         logger.info("Email sent to %s, status=%s", to_email, result.get("status"))
         return True
-    except Exception:
+    except (AzureError, ValueError):
         logger.exception("Failed to send email to %s", to_email)
         return False
 

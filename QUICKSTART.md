@@ -59,7 +59,7 @@ uv run alembic upgrade head
 **Web UI** (recommended):
 ```bash
 uv run itemwise-web
-# Open http://localhost:8000
+# Open http://localhost:8080
 ```
 
 **MCP Server** (for Claude Desktop / AI agents):

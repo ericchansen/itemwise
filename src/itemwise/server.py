@@ -40,6 +40,7 @@ from .database.crud import (
     search_items_by_text,
     update_item,
 )
+from sqlalchemy.exc import SQLAlchemyError
 from .database.engine import AsyncSessionLocal, close_db, init_db
 from .embeddings import generate_embedding
 
@@ -198,7 +199,7 @@ async def add_item(
                 "quantity": item.quantity,
                 "location": location_name,
             }
-    except Exception as e:
+    except (SQLAlchemyError, ValueError) as e:
         logger.exception("Error adding item")
         raise ToolError(f"Failed to add item: {str(e)}")
 
@@ -296,7 +297,7 @@ async def update_item_tool(
             }
     except ToolError:
         raise
-    except Exception as e:
+    except (SQLAlchemyError, ValueError) as e:
         logger.exception("Error updating item")
         raise ToolError(f"Failed to update item: {str(e)}")
 
@@ -346,7 +347,7 @@ async def remove_item(item_id: int) -> dict[str, Any]:
                 raise ToolError(f"Failed to delete item {item_id}")
     except ToolError:
         raise
-    except Exception as e:
+    except (SQLAlchemyError, ValueError) as e:
         logger.exception("Error removing item")
         raise ToolError(f"Failed to remove item: {str(e)}")
 
@@ -405,7 +406,7 @@ async def list_inventory(
                     for item in items
                 ],
             }
-    except Exception as e:
+    except SQLAlchemyError as e:
         logger.exception("Error listing items")
         raise ToolError(f"Failed to list items: {str(e)}")
 
@@ -505,7 +506,7 @@ async def search_inventory(
                 "count": len(results),
                 "results": results,
             }
-    except Exception as e:
+    except (SQLAlchemyError, ValueError) as e:
         logger.exception("Error searching inventory")
         raise ToolError(f"Failed to search inventory: {str(e)}")
 
@@ -557,7 +558,7 @@ async def add_location(
                     "description": location.description,
                 },
             }
-    except Exception as e:
+    except (SQLAlchemyError, ValueError) as e:
         logger.exception("Error creating location")
         raise ToolError(f"Failed to create location: {str(e)}")
 
@@ -588,7 +589,7 @@ async def get_locations() -> dict[str, Any]:
                     for loc in locations
                 ],
             }
-    except Exception as e:
+    except SQLAlchemyError as e:
         logger.exception("Error listing locations")
         raise ToolError(f"Failed to list locations: {str(e)}")
 
@@ -622,7 +623,7 @@ async def get_oldest_items_tool(
                 "count": len(oldest),
                 "items": oldest,
             }
-    except Exception as e:
+    except SQLAlchemyError as e:
         logger.exception("Error getting oldest items")
         raise ToolError(f"Failed to get oldest items: {str(e)}")
 
@@ -656,7 +657,7 @@ async def get_expiring_items_tool(
                 "days_window": days,
                 "items": expiring,
             }
-    except Exception as e:
+    except SQLAlchemyError as e:
         logger.exception("Error getting expiring items")
         raise ToolError(f"Failed to get expiring items: {str(e)}")
 

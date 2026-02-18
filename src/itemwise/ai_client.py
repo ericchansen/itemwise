@@ -321,7 +321,7 @@ async def process_chat_with_tools(
                 try:
                     result = await tool_handlers[function_name](**function_args)
                     tool_result = json.dumps(result)
-                except Exception as e:
+                except Exception as e:  # Intentionally broad: tool handlers may raise any exception type
                     logger.error(f"Tool error: {e}")
                     tool_result = json.dumps({"error": str(e)})
             else:

@@ -59,7 +59,7 @@ class TestHealth:
         assert resp.status_code == 200
         data = resp.json()
         assert data["status"] == "healthy"
-        assert data["database"] == "connected"
+        assert data["dependencies"]["database"] == "healthy"
 
 
 # ===== Auth: Register =====

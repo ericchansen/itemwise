@@ -293,7 +293,7 @@
 
         async function tryRefresh() {
             try {
-                const res = await fetch(`${API_URL}/api/auth/refresh`, {
+                const res = await fetch(`${API_URL}/api/v1/auth/refresh`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ refresh_token: getRefreshToken() })
@@ -327,7 +327,7 @@
             try {
                 let res;
                 if (authMode === 'register') {
-                    res = await fetch(`${API_URL}/api/auth/register`, {
+                    res = await fetch(`${API_URL}/api/v1/auth/register`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ email, password })
@@ -336,7 +336,7 @@
                     const formData = new URLSearchParams();
                     formData.append('username', email);
                     formData.append('password', password);
-                    res = await fetch(`${API_URL}/api/auth/login`, {
+                    res = await fetch(`${API_URL}/api/v1/auth/login`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                         body: formData
@@ -422,7 +422,7 @@
             errorEl.classList.add('hidden');
             successEl.classList.add('hidden');
             try {
-                const res = await fetch(`${API_URL}/api/auth/forgot-password`, {
+                const res = await fetch(`${API_URL}/api/v1/auth/forgot-password`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ email })
@@ -450,7 +450,7 @@
             const params = new URLSearchParams(window.location.search);
             const token = params.get('reset_token');
             try {
-                const res = await fetch(`${API_URL}/api/auth/reset-password`, {
+                const res = await fetch(`${API_URL}/api/v1/auth/reset-password`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ token, new_password: password })
@@ -525,7 +525,7 @@
             addMessage(text, true);
             document.getElementById('chat-input').value = '';
             try {
-                const res = await authFetch(`${API_URL}/api/chat`, {
+                const res = await authFetch(`${API_URL}/api/v1/chat`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: text })
@@ -545,7 +545,7 @@
         async function loadInventory() {
             const search = document.getElementById('search-input').value;
             const location = document.getElementById('location-filter').value;
-            let url = search ? `${API_URL}/api/search?q=${encodeURIComponent(search)}` : `${API_URL}/api/items?`;
+            let url = search ? `${API_URL}/api/v1/search?q=${encodeURIComponent(search)}` : `${API_URL}/api/v1/items?`;
             if (location) url += `${search ? '&' : ''}location=${encodeURIComponent(location)}`;
             
             try {
@@ -577,7 +577,7 @@
 
         async function loadLocations() {
             try {
-                const res = await authFetch(`${API_URL}/api/locations`);
+                const res = await authFetch(`${API_URL}/api/v1/locations`);
                 const data = await res.json();
                 const select = document.getElementById('location-filter');
                 const val = select.value;
@@ -590,7 +590,7 @@
         // ===== Inventory Sharing =====
         async function loadInventories() {
             try {
-                const res = await authFetch(`${API_URL}/api/inventories`);
+                const res = await authFetch(`${API_URL}/api/v1/inventories`);
                 const data = await res.json();
                 const sel = document.getElementById('inventory-selector');
                 sel.innerHTML = data.inventories.map(inv =>
@@ -617,7 +617,7 @@
 
         async function loadProfile() {
             try {
-                const res = await authFetch(`${API_URL}/api/auth/me`);
+                const res = await authFetch(`${API_URL}/api/v1/auth/me`);
                 const data = await res.json();
                 document.getElementById('profile-email').textContent = data.email;
             } catch(e) { console.error('Failed to load profile', e); }
@@ -636,7 +636,7 @@
             }
 
             try {
-                const res = await authFetch(`${API_URL}/api/auth/password`, {
+                const res = await authFetch(`${API_URL}/api/v1/auth/password`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -662,7 +662,7 @@
         async function loadMembers() {
             if (!activeInventoryId) return;
             try {
-                const res = await authFetch(`${API_URL}/api/inventories/${activeInventoryId}/members`);
+                const res = await authFetch(`${API_URL}/api/v1/inventories/${activeInventoryId}/members`);
                 const data = await res.json();
                 document.getElementById('members-list').innerHTML = data.members.map(m => `
                     <div class="flex items-center justify-between p-3 bg-card border border-border rounded-lg">
@@ -687,7 +687,7 @@
                 }
             }
             try {
-                const res = await authFetch(`${API_URL}/api/inventories/${activeInventoryId}/members`, {
+                const res = await authFetch(`${API_URL}/api/v1/inventories/${activeInventoryId}/members`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ email })
@@ -730,7 +730,7 @@
             btn.disabled = true;
             btn.textContent = 'Sending...';
             try {
-                const res = await authFetch(`${API_URL}/api/notifications/expiration-digest`, { method: 'POST' });
+                const res = await authFetch(`${API_URL}/api/v1/notifications/expiration-digest`, { method: 'POST' });
                 const data = await res.json();
                 if (res.ok) {
                     if (data.status === 'no_items') {
@@ -783,7 +783,7 @@
                 description: document.getElementById('item-description').value || null
             };
             try {
-                const res = await authFetch(`${API_URL}/api/items`, {
+                const res = await authFetch(`${API_URL}/api/v1/items`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(item)
@@ -795,7 +795,7 @@
         async function deleteItem(id) {
             if (!confirm('Delete this item?')) return;
             try {
-                const res = await authFetch(`${API_URL}/api/items/${id}`, { method: 'DELETE' });
+                const res = await authFetch(`${API_URL}/api/v1/items/${id}`, { method: 'DELETE' });
                 if (res.ok) loadInventory();
             } catch (e) {}
         }

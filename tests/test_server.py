@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastmcp.exceptions import ToolError
 from pytest_mock import MockerFixture
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from itemwise.database.models import Inventory, User
@@ -102,11 +103,11 @@ class TestAddItem:
 
         def error_factory() -> Any:
             async def raise_error() -> None:
-                raise Exception("DB Error")
+                raise SQLAlchemyError("DB Error")
 
             class ErrorContextManager:
                 async def __aenter__(self) -> None:
-                    raise Exception("DB Error")
+                    raise SQLAlchemyError("DB Error")
 
                 async def __aexit__(self, *args: object) -> bool:
                     return False

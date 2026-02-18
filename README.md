@@ -71,7 +71,7 @@ Without Azure OpenAI, the chat will work in fallback mode with basic pattern mat
 # Start the web server
 uv run itemwise-web
 
-# Open http://localhost:8000 in your browser
+# Open http://localhost:8080 in your browser
 ```
 
 **Option B: MCP Server (For AI agents like Claude)**
@@ -178,7 +178,7 @@ The web server also exposes a REST API:
 - `POST /api/locations` - Create location
 - `POST /api/chat` - AI-powered chat endpoint (requires Azure OpenAI for full functionality)
 
-API docs available at `http://localhost:8000/docs`
+API docs available at `http://localhost:8080/docs`
 
 ## Configuration
 
