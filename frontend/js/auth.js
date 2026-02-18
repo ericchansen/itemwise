@@ -23,6 +23,11 @@ export async function authFetch(url, opts = {}) {
     if (res.status === 401 && getRefreshToken()) {
         const refreshed = await tryRefresh();
         if (refreshed) {
+            // Re-capture CSRF token after refresh (cookie may have changed)
+            const newCsrfToken = getCsrfToken();
+            if (newCsrfToken) {
+                opts.headers = { ...opts.headers, 'X-CSRF-Token': newCsrfToken };
+            }
             res = await fetch(url, opts);
         } else { logout(); }
     }

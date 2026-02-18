@@ -972,8 +972,11 @@ async def create_lot(
     Returns:
         The created item lot
     """
-    # Get the parent item and update its quantity
-    query = select(InventoryItem).where(InventoryItem.id == item_id)
+    # Get the parent item and update its quantity (exclude soft-deleted)
+    query = select(InventoryItem).where(
+        InventoryItem.id == item_id,
+        InventoryItem.deleted_at.is_(None),
+    )
     if inventory_id is not None:
         query = query.where(InventoryItem.inventory_id == inventory_id)
     result = await session.execute(query)
@@ -1048,11 +1051,16 @@ async def reduce_lot(
     if lot is None:
         return None
 
-    # Get the parent item
+    # Get the parent item (exclude soft-deleted)
     item_result = await session.execute(
-        select(InventoryItem).where(InventoryItem.id == lot.item_id)
+        select(InventoryItem).where(
+            InventoryItem.id == lot.item_id,
+            InventoryItem.deleted_at.is_(None),
+        )
     )
-    item = item_result.scalar_one()
+    item = item_result.scalar_one_or_none()
+    if item is None:
+        return None
 
     if quantity >= lot.quantity:
         # Delete the lot entirely
@@ -1106,11 +1114,16 @@ async def delete_lot(
     if lot is None:
         return False
 
-    # Get the parent item
+    # Get the parent item (exclude soft-deleted)
     item_result = await session.execute(
-        select(InventoryItem).where(InventoryItem.id == lot.item_id)
+        select(InventoryItem).where(
+            InventoryItem.id == lot.item_id,
+            InventoryItem.deleted_at.is_(None),
+        )
     )
-    item = item_result.scalar_one()
+    item = item_result.scalar_one_or_none()
+    if item is None:
+        return False
 
     item.quantity -= lot.quantity
     await session.delete(lot)
@@ -1258,7 +1271,10 @@ async def sync_item_quantity(
     total = result.scalar() or 0
 
     item_result = await session.execute(
-        select(InventoryItem).where(InventoryItem.id == item_id)
+        select(InventoryItem).where(
+            InventoryItem.id == item_id,
+            InventoryItem.deleted_at.is_(None),
+        )
     )
     item = item_result.scalar_one_or_none()
     if item is None:

@@ -63,7 +63,7 @@ class TestConfirmActionEndpoint:
     ) -> None:
         headers = auth_header(known_user.id, known_user.email)
         # Store a pending remove action
-        action_id = _store_pending_action(
+        action_id = await _store_pending_action(
             known_user.id, "remove_item",
             {"item_id": 42, "quantity": 2, "lot_id": None},
             "Remove 2 × Frozen Pizza", inventory_id=1,
@@ -88,7 +88,7 @@ class TestConfirmActionEndpoint:
         self, client: AsyncClient, known_user: User
     ) -> None:
         headers = auth_header(known_user.id, known_user.email)
-        action_id = _store_pending_action(
+        action_id = await _store_pending_action(
             known_user.id, "remove_item",
             {"item_id": 999, "quantity": 1, "lot_id": None},
             "Remove 1 × Something", inventory_id=1,
@@ -109,7 +109,7 @@ class TestConfirmActionEndpoint:
         self, client: AsyncClient, known_user: User
     ) -> None:
         headers = auth_header(known_user.id, known_user.email)
-        action_id = _store_pending_action(
+        action_id = await _store_pending_action(
             known_user.id, "remove_item",
             {"item_id": 1, "quantity": 1, "lot_id": None},
             "Remove 1 × Item", inventory_id=1,
@@ -141,7 +141,7 @@ class TestConfirmActionEndpoint:
         self, client: AsyncClient, known_user: User
     ) -> None:
         # Store action for known_user
-        action_id = _store_pending_action(
+        action_id = await _store_pending_action(
             known_user.id, "remove_item",
             {"item_id": 1, "quantity": 1, "lot_id": None},
             "Remove 1 × Item", inventory_id=1,
@@ -164,18 +164,20 @@ class TestConfirmActionEndpoint:
 class TestStorePendingAction:
     """Tests for the _store_pending_action helper."""
 
-    def test_returns_unique_ids(self) -> None:
-        id1 = _store_pending_action(1, "remove_item", {}, "test1", 1)
-        id2 = _store_pending_action(1, "remove_item", {}, "test2", 1)
+    @pytest.mark.asyncio
+    async def test_returns_unique_ids(self) -> None:
+        id1 = await _store_pending_action(1, "remove_item", {}, "test1", 1)
+        id2 = await _store_pending_action(1, "remove_item", {}, "test2", 1)
         assert id1 != id2
 
-    def test_cleanup_expired(self) -> None:
+    @pytest.mark.asyncio
+    async def test_cleanup_expired(self) -> None:
         # Store an expired action
-        old_id = _store_pending_action(1, "remove_item", {}, "old", 1)
+        old_id = await _store_pending_action(1, "remove_item", {}, "old", 1)
         _pending_actions[old_id]["expires_at"] = time_module.time() - 10
 
         # Store a new action, which triggers cleanup
-        _store_pending_action(1, "remove_item", {}, "new", 1)
+        await _store_pending_action(1, "remove_item", {}, "new", 1)
         assert old_id not in _pending_actions
 
 

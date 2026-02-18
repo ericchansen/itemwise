@@ -1,7 +1,7 @@
 """FastAPI REST API for inventory management."""
 
+import asyncio
 import json
-import json as json_module
 import logging
 import os
 import secrets
@@ -89,7 +89,7 @@ class JSONFormatter(logging.Formatter):
         for key in ("request_id", "user_id", "endpoint", "method", "status_code", "duration_ms"):
             if hasattr(record, key):
                 log_data[key] = getattr(record, key)
-        return json_module.dumps(log_data)
+        return json.dumps(log_data)
 
 
 def _configure_logging():
@@ -1222,24 +1222,26 @@ async def remove_inventory_member_endpoint(
 
 # In-memory pending actions store (per-user, with TTL)
 _pending_actions: dict[str, dict[str, Any]] = {}  # action_id -> {user_id, action, params, ...}
+_pending_actions_lock = asyncio.Lock()
 
 
-def _store_pending_action(user_id: int, action: str, params: dict[str, Any], description: str, inventory_id: int) -> str:
+async def _store_pending_action(user_id: int, action: str, params: dict[str, Any], description: str, inventory_id: int) -> str:
     """Store a pending destructive action and return its action_id."""
     action_id = secrets.token_urlsafe(16)
-    _pending_actions[action_id] = {
-        "user_id": user_id,
-        "action": action,
-        "params": params,
-        "description": description,
-        "inventory_id": inventory_id,
-        "expires_at": time_module.time() + 120,  # 2 minute TTL
-    }
-    # Cleanup expired entries
-    now = time_module.time()
-    expired = [k for k, v in _pending_actions.items() if v["expires_at"] < now]
-    for k in expired:
-        del _pending_actions[k]
+    async with _pending_actions_lock:
+        _pending_actions[action_id] = {
+            "user_id": user_id,
+            "action": action,
+            "params": params,
+            "description": description,
+            "inventory_id": inventory_id,
+            "expires_at": time_module.time() + 120,  # 2 minute TTL
+        }
+        # Cleanup expired entries
+        now = time_module.time()
+        expired = [k for k, v in _pending_actions.items() if v["expires_at"] < now]
+        for k in expired:
+            del _pending_actions[k]
     return action_id
 
 
@@ -1337,7 +1339,7 @@ async def _chat_with_ai(user_message: str, user_id: int, inventory_id: int) -> C
 
             remove_qty = quantity or item.quantity
             desc = f"Remove {remove_qty} × {item.name}"
-            action_id = _store_pending_action(
+            action_id = await _store_pending_action(
                 user_id, "remove_item",
                 {"item_id": item_id, "quantity": quantity, "lot_id": lot_id},
                 desc, inventory_id,
@@ -1424,13 +1426,16 @@ async def _chat_with_ai(user_message: str, user_id: int, inventory_id: int) -> C
 
     try:
         # Snapshot pending action keys before the call
-        pre_keys = set(_pending_actions.keys())
+        async with _pending_actions_lock:
+            pre_keys = set(_pending_actions.keys())
         response_text = await process_chat_with_tools(user_message, tool_handlers)
         # Check if a new pending action was created during tool execution
-        new_keys = set(_pending_actions.keys()) - pre_keys
+        async with _pending_actions_lock:
+            new_keys = set(_pending_actions.keys()) - pre_keys
+            if new_keys:
+                action_id = new_keys.pop()
+                pending = _pending_actions[action_id]
         if new_keys:
-            action_id = new_keys.pop()
-            pending = _pending_actions[action_id]
             return ChatResponse(
                 response=response_text,
                 action="confirmation_required",
@@ -1515,12 +1520,14 @@ async def confirm_action(
     body: ConfirmActionRequest,
 ):
     """Confirm or reject a pending destructive action."""
-    pending = _pending_actions.pop(body.action_id, None)
+    async with _pending_actions_lock:
+        pending = _pending_actions.pop(body.action_id, None)
     if not pending:
         raise HTTPException(status_code=404, detail="Action expired or not found")
     if pending["user_id"] != current_user.user_id:
         # Put it back so the real owner can still confirm
-        _pending_actions[body.action_id] = pending
+        async with _pending_actions_lock:
+            _pending_actions[body.action_id] = pending
         raise HTTPException(status_code=403, detail="Not authorized")
     if pending["expires_at"] < time_module.time():
         raise HTTPException(status_code=410, detail="Action expired")
