@@ -7,7 +7,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import bcrypt
-from jose import JWTError, jwt
+import jwt
+from jwt.exceptions import PyJWTError
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -210,7 +211,7 @@ def decode_access_token(token: str) -> Optional[TokenData]:
             return None
 
         return TokenData(user_id=user_id, email=email)
-    except JWTError:
+    except PyJWTError:
         return None
 
 
@@ -237,7 +238,7 @@ def decode_refresh_token(token: str) -> Optional[TokenData]:
             return None
 
         return TokenData(user_id=user_id, email=email)
-    except JWTError:
+    except PyJWTError:
         return None
 
 
@@ -279,5 +280,5 @@ def verify_reset_token(token: str) -> Optional[str]:
         if not email:
             return None
         return email
-    except JWTError:
+    except PyJWTError:
         return None

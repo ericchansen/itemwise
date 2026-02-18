@@ -28,7 +28,7 @@ class TestResetTokens:
     def test_verify_expired_token_returns_none(self) -> None:
         """An expired reset token returns None."""
         from itemwise.auth import ALGORITHM, SECRET_KEY
-        from jose import jwt
+        import jwt
         from datetime import datetime, timezone
 
         payload = {
@@ -147,7 +147,7 @@ class TestResetPasswordEndpoint:
     async def test_expired_token_returns_400(self) -> None:
         """An expired token returns 400."""
         from itemwise.auth import ALGORITHM, SECRET_KEY
-        from jose import jwt
+        import jwt
         from datetime import datetime, timezone
 
         from itemwise.api import app

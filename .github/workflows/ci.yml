@@ -56,7 +56,68 @@ jobs:
         run: uv run pytest -v --tb=short
 
       - name: Run linting
-        run: uv run ruff check src/
+        run: uv run ruff check .
 
-  # Note: Docker build removed from CI due to HuggingFace model download timeout.
-  # Use scripts/deploy.ps1 for local Docker builds and Azure deployment.
+  e2e:
+    if: github.event_name == 'push'
+    needs: test
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: inventory
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: inventory
+      JWT_SECRET_KEY: ci-test-secret-key
+      AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+      AZURE_OPENAI_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_DEPLOYMENT }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run database migrations
+        run: uv run alembic upgrade head
+
+      - name: Start app server
+        run: |
+          uv run uvicorn main:app --host 0.0.0.0 --port 8080 &
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/health >/dev/null 2>&1; then
+              echo "App is healthy"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Install Playwright Chromium
+        run: uv run python -m playwright install --with-deps chromium
+
+      - name: Run E2E tests
+        run: uv run python -m pytest tests/test_e2e.py -v -m e2e --no-cov
