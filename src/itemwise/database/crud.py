@@ -3,7 +3,7 @@
 import json
 import logging
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy import delete, func, select
@@ -441,6 +441,7 @@ async def get_item(session: AsyncSession, inventory_id: int, item_id: int) -> Op
         .where(
             InventoryItem.id == item_id,
             InventoryItem.inventory_id == inventory_id,
+            InventoryItem.deleted_at.is_(None),
         )
     )
     item: InventoryItem | None = result.scalar_one_or_none()
@@ -470,7 +471,10 @@ async def list_items(
     Returns:
         Tuple of (list of inventory items, total count matching filters)
     """
-    base_filter = select(InventoryItem).where(InventoryItem.inventory_id == inventory_id)
+    base_filter = select(InventoryItem).where(
+        InventoryItem.inventory_id == inventory_id,
+        InventoryItem.deleted_at.is_(None),
+    )
 
     if category:
         base_filter = base_filter.where(InventoryItem.category == category)
@@ -544,7 +548,7 @@ async def update_item(
 
 
 async def delete_item(session: AsyncSession, inventory_id: int, item_id: int) -> bool:
-    """Delete an inventory item.
+    """Soft-delete an inventory item by setting deleted_at timestamp.
 
     Args:
         session: Database session
@@ -552,20 +556,134 @@ async def delete_item(session: AsyncSession, inventory_id: int, item_id: int) ->
         item_id: ID of the item to delete
 
     Returns:
-        True if item was deleted, False if not found
+        True if item was soft-deleted, False if not found
+    """
+    result = await session.execute(
+        select(InventoryItem).where(
+            InventoryItem.id == item_id,
+            InventoryItem.inventory_id == inventory_id,
+            InventoryItem.deleted_at.is_(None),
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        return False
+    item.deleted_at = datetime.now(timezone.utc)
+    await session.commit()
+    logger.info(f"Soft-deleted item id={item_id}")
+    return True
+
+
+async def list_deleted_items(
+    session: AsyncSession, inventory_id: int, limit: int = 50, offset: int = 0
+) -> tuple[list[InventoryItem], int]:
+    """List soft-deleted items (trash).
+
+    Args:
+        session: Database session
+        inventory_id: ID of the owning inventory
+        limit: Maximum number of items to return
+        offset: Number of items to skip
+
+    Returns:
+        Tuple of (list of soft-deleted items, total count)
+    """
+    base_filter = select(InventoryItem).where(
+        InventoryItem.inventory_id == inventory_id,
+        InventoryItem.deleted_at.isnot(None),
+    )
+
+    count_q = select(func.count()).select_from(base_filter.subquery())
+    total = (await session.execute(count_q)).scalar() or 0
+
+    query = (
+        base_filter.options(selectinload(InventoryItem.location))
+        .order_by(InventoryItem.deleted_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    result = await session.execute(query)
+    return list(result.scalars().all()), total
+
+
+async def restore_item(session: AsyncSession, inventory_id: int, item_id: int) -> bool:
+    """Restore a soft-deleted item.
+
+    Args:
+        session: Database session
+        inventory_id: ID of the owning inventory
+        item_id: ID of the item to restore
+
+    Returns:
+        True if item was restored, False if not found
+    """
+    result = await session.execute(
+        select(InventoryItem).where(
+            InventoryItem.id == item_id,
+            InventoryItem.inventory_id == inventory_id,
+            InventoryItem.deleted_at.isnot(None),
+        )
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        return False
+    item.deleted_at = None
+    await session.commit()
+    logger.info(f"Restored item id={item_id}")
+    return True
+
+
+async def purge_item(session: AsyncSession, inventory_id: int, item_id: int) -> bool:
+    """Permanently delete a soft-deleted item.
+
+    Args:
+        session: Database session
+        inventory_id: ID of the owning inventory
+        item_id: ID of the item to purge (must already be soft-deleted)
+
+    Returns:
+        True if item was purged, False if not found or not soft-deleted
     """
     result = await session.execute(
         delete(InventoryItem).where(
             InventoryItem.id == item_id,
             InventoryItem.inventory_id == inventory_id,
+            InventoryItem.deleted_at.isnot(None),
         )
     )
     await session.commit()
+    purged: bool = result.rowcount > 0  # type: ignore[attr-defined]
+    if purged:
+        logger.info(f"Purged item id={item_id}")
+    return purged
 
-    deleted: bool = result.rowcount > 0  # type: ignore[attr-defined]
-    if deleted:
-        logger.info(f"Deleted item id={item_id}")
-    return deleted
+
+async def purge_old_deleted_items(
+    session: AsyncSession, inventory_id: int, days: int = 30
+) -> int:
+    """Permanently delete items that have been in trash for more than N days.
+
+    Args:
+        session: Database session
+        inventory_id: ID of the owning inventory
+        days: Number of days after which soft-deleted items are purged
+
+    Returns:
+        Number of items purged
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    result = await session.execute(
+        delete(InventoryItem).where(
+            InventoryItem.inventory_id == inventory_id,
+            InventoryItem.deleted_at.isnot(None),
+            InventoryItem.deleted_at < cutoff,
+        )
+    )
+    await session.commit()
+    count: int = result.rowcount  # type: ignore[attr-defined]
+    if count:
+        logger.info(f"Purged {count} old deleted items from inventory {inventory_id}")
+    return count
 
 
 async def search_items_by_text(
@@ -594,6 +712,7 @@ async def search_items_by_text(
         .options(selectinload(InventoryItem.location))
         .where(
             (InventoryItem.inventory_id == inventory_id) &
+            (InventoryItem.deleted_at.is_(None)) &
             ((InventoryItem.name.ilike(f"%{query}%"))
             | (InventoryItem.description.ilike(f"%{query}%")))
         )
@@ -640,6 +759,7 @@ async def search_items_by_embedding(
         .options(selectinload(InventoryItem.location))
         .where(
             (InventoryItem.inventory_id == inventory_id) &
+            (InventoryItem.deleted_at.is_(None)) &
             (InventoryItem.embedding.isnot(None))
         )
     )
@@ -1042,6 +1162,7 @@ async def get_oldest_items(
         .join(InventoryItem, ItemLot.item_id == InventoryItem.id)
         .join(Location, InventoryItem.location_id == Location.id)
         .where(InventoryItem.inventory_id == inventory_id)
+        .where(InventoryItem.deleted_at.is_(None))
     )
 
     if location_name:
@@ -1096,6 +1217,7 @@ async def get_expiring_items(
         .join(InventoryItem, ItemLot.item_id == InventoryItem.id)
         .outerjoin(Location, InventoryItem.location_id == Location.id)
         .where(InventoryItem.inventory_id == inventory_id)
+        .where(InventoryItem.deleted_at.is_(None))
         .where(ItemLot.expiration_date.isnot(None))
         .where(ItemLot.expiration_date <= cutoff)
         .where(ItemLot.quantity > 0)

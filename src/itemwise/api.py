@@ -1,8 +1,12 @@
 """FastAPI REST API for inventory management."""
 
 import json
+import json as json_module
 import logging
 import os
+import secrets
+import sys
+import time as time_module
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Optional
@@ -11,6 +15,7 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 import openai
 from pydantic import BaseModel, EmailStr, Field
@@ -39,10 +44,13 @@ from .database.crud import (
     get_user_by_email,
     get_user_default_inventory,
     is_inventory_member,
+    list_deleted_items,
     list_items,
     list_locations,
     log_transaction,
+    purge_item,
     reduce_lot,
+    restore_item,
     search_items_by_embedding,
     search_items_by_text,
     update_item,
@@ -65,8 +73,45 @@ from .auth import (
     verify_reset_token,
 )
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure structured logging
+class JSONFormatter(logging.Formatter):
+    """Structured JSON log formatter for production."""
+    def format(self, record):
+        log_data = {
+            "timestamp": self.formatTime(record),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if record.exc_info and record.exc_info[0]:
+            log_data["exception"] = self.formatException(record.exc_info)
+        # Add extra fields if present
+        for key in ("request_id", "user_id", "endpoint", "method", "status_code", "duration_ms"):
+            if hasattr(record, key):
+                log_data[key] = getattr(record, key)
+        return json_module.dumps(log_data)
+
+
+def _configure_logging():
+    """Configure structured logging based on environment."""
+    is_prod = os.getenv("ENV", "development").lower() in ("production", "prod")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+
+    handler = logging.StreamHandler(sys.stdout)
+    if is_prod:
+        handler.setFormatter(JSONFormatter())
+    else:
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s: %(message)s"
+        ))
+
+    # Clear existing handlers and add ours
+    root.handlers.clear()
+    root.addHandler(handler)
+
+
+_configure_logging()
 logger = logging.getLogger(__name__)
 
 # Get the frontend directory path
@@ -132,6 +177,12 @@ class ChatResponse(BaseModel):
     response: str
     action: Optional[str] = None
     data: Optional[dict[str, Any]] = None
+    pending_action: Optional[dict[str, Any]] = None
+
+
+class ConfirmActionRequest(BaseModel):
+    action_id: str
+    confirmed: bool
 
 
 def _get_item_text_for_embedding(
@@ -217,6 +268,91 @@ def get_rate_limit_key(request: Request) -> str:
 limiter = Limiter(key_func=get_rate_limit_key, default_limits=["60/minute"])
 app.state.limiter = limiter
 app.add_middleware(SlowAPIMiddleware)
+
+# ===== CSRF Protection (double-submit cookie) =====
+
+CSRF_EXEMPT_PATHS = {
+    "/api/v1/auth/login", "/api/v1/auth/register",
+    "/api/auth/login", "/api/auth/register",
+    "/api/v1/auth/forgot-password", "/api/auth/forgot-password",
+    "/api/v1/auth/reset-password", "/api/auth/reset-password",
+    "/api/v1/auth/refresh", "/api/auth/refresh",
+    "/api/v1/auth/logout", "/api/auth/logout",
+    "/health",
+}
+
+
+def _generate_csrf_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _set_csrf_cookie(response: JSONResponse, token: str, *, secure: bool) -> None:
+    response.set_cookie(
+        key="csrf_token",
+        value=token,
+        httponly=False,  # JS needs to read this
+        samesite="strict",
+        secure=secure,
+        max_age=1800,
+        path="/",
+    )
+
+
+@app.middleware("http")
+async def csrf_middleware(request: Request, call_next):
+    """Enforce double-submit cookie CSRF for state-changing requests."""
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        response = await call_next(request)
+        return response
+
+    if request.url.path in CSRF_EXEMPT_PATHS:
+        response = await call_next(request)
+        return response
+
+    # Only enforce CSRF when there's a cookie-based session
+    if "access_token" not in request.cookies:
+        response = await call_next(request)
+        return response
+
+    cookie_token = request.cookies.get("csrf_token")
+    header_token = request.headers.get("X-CSRF-Token")
+
+    if not cookie_token or not header_token or cookie_token != header_token:
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "CSRF token validation failed"},
+        )
+
+    response = await call_next(request)
+    return response
+
+
+@app.middleware("http")
+async def request_logging_middleware(request: Request, call_next):
+    """Log every request with structured metadata."""
+    start = time_module.time()
+    request_id = request.headers.get("x-request-id", secrets.token_hex(8))
+
+    response = await call_next(request)
+
+    duration_ms = round((time_module.time() - start) * 1000, 2)
+
+    # Only log API requests, not static files
+    if request.url.path.startswith("/api") or request.url.path == "/health":
+        logger.info(
+            f"{request.method} {request.url.path} {response.status_code} {duration_ms}ms",
+            extra={
+                "request_id": request_id,
+                "method": request.method,
+                "endpoint": request.url.path,
+                "status_code": response.status_code,
+                "duration_ms": duration_ms,
+            },
+        )
+
+    # Pass request ID to response
+    response.headers["X-Request-ID"] = request_id
+    return response
 
 
 @app.exception_handler(RateLimitExceeded)
@@ -358,6 +494,8 @@ async def register(request: Request, user_data: UserRegister):
             status_code=status.HTTP_201_CREATED,
         )
         _set_token_cookie(response, access_token, secure=request.url.scheme == "https")
+        csrf_token = _generate_csrf_token()
+        _set_csrf_cookie(response, csrf_token, secure=request.url.scheme == "https")
         return response
 
 
@@ -389,6 +527,8 @@ async def login(request: Request, form_data: Annotated[OAuth2PasswordRequestForm
             content={"access_token": access_token, "refresh_token": refresh_tok, "token_type": "bearer"},  # nosec B105
         )
         _set_token_cookie(response, access_token, secure=request.url.scheme == "https")
+        csrf_token = _generate_csrf_token()
+        _set_csrf_cookie(response, csrf_token, secure=request.url.scheme == "https")
         return response
 
 
@@ -408,6 +548,8 @@ async def refresh_token(request: Request, body: RefreshTokenRequest):
         content={"access_token": access_token, "token_type": "bearer"},  # nosec B105
     )
     _set_token_cookie(response, access_token, secure=request.url.scheme == "https")
+    csrf_token = _generate_csrf_token()
+    _set_csrf_cookie(response, csrf_token, secure=request.url.scheme == "https")
     return response
 
 
@@ -427,6 +569,7 @@ async def logout():
     """Log out by clearing the access_token cookie."""
     response = JSONResponse(content={"message": "Logged out"})
     response.delete_cookie(key="access_token", path="/")
+    response.delete_cookie(key="csrf_token", path="/")
     return response
 
 
@@ -501,6 +644,7 @@ async def delete_account(
             raise HTTPException(status_code=404, detail="User not found")
     response = JSONResponse(content={"message": "Account deleted successfully"})
     response.delete_cookie(key="access_token", path="/")
+    response.delete_cookie(key="csrf_token", path="/")
     return response
 
 
@@ -544,6 +688,71 @@ async def get_items(
                 for item in items
             ],
         }
+
+
+@api_router.get("/items/trash")
+async def get_trash_items(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+):
+    """List soft-deleted items in trash."""
+    async with AsyncSessionLocal() as session:
+        items, total = await list_deleted_items(
+            session, inventory_id=inventory_id, limit=limit, offset=offset
+        )
+        return {
+            "count": len(items),
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "items": [
+                {
+                    "id": item.id,
+                    "name": item.name,
+                    "quantity": item.quantity,
+                    "category": item.category,
+                    "location": item.location.name if item.location else None,
+                    "description": item.description,
+                    "deleted_at": item.deleted_at.isoformat() if item.deleted_at else None,
+                }
+                for item in items
+            ],
+        }
+
+
+@api_router.post("/items/{item_id}/restore")
+async def restore_deleted_item(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
+    item_id: int,
+):
+    """Restore a soft-deleted item from trash."""
+    async with AsyncSessionLocal() as session:
+        restored = await restore_item(session, inventory_id, item_id)
+        if not restored:
+            raise HTTPException(
+                status_code=404, detail=f"Deleted item {item_id} not found in trash"
+            )
+        return {"status": "success", "message": f"Restored item {item_id}"}
+
+
+@api_router.delete("/items/{item_id}/purge")
+async def purge_deleted_item(
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
+    item_id: int,
+):
+    """Permanently delete a soft-deleted item."""
+    async with AsyncSessionLocal() as session:
+        purged = await purge_item(session, inventory_id, item_id)
+        if not purged:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Deleted item {item_id} not found in trash",
+            )
+        return {"status": "success", "message": f"Permanently deleted item {item_id}"}
 
 
 @api_router.post("/items")
@@ -1011,6 +1220,28 @@ async def remove_inventory_member_endpoint(
 
 # ===== Chat Endpoint =====
 
+# In-memory pending actions store (per-user, with TTL)
+_pending_actions: dict[str, dict[str, Any]] = {}  # action_id -> {user_id, action, params, ...}
+
+
+def _store_pending_action(user_id: int, action: str, params: dict[str, Any], description: str, inventory_id: int) -> str:
+    """Store a pending destructive action and return its action_id."""
+    action_id = secrets.token_urlsafe(16)
+    _pending_actions[action_id] = {
+        "user_id": user_id,
+        "action": action,
+        "params": params,
+        "description": description,
+        "inventory_id": inventory_id,
+        "expires_at": time_module.time() + 120,  # 2 minute TTL
+    }
+    # Cleanup expired entries
+    now = time_module.time()
+    expired = [k for k, v in _pending_actions.items() if v["expires_at"] < now]
+    for k in expired:
+        del _pending_actions[k]
+    return action_id
+
 
 @api_router.post("/chat", response_model=ChatResponse)
 @limiter.limit("20/minute")
@@ -1098,64 +1329,25 @@ async def _chat_with_ai(user_message: str, user_id: int, inventory_id: int) -> C
             }
 
     async def handle_remove_item(item_id: int, quantity: int | None = None, lot_id: int | None = None) -> dict:
+        """Intercept remove_item to require confirmation instead of executing immediately."""
         async with AsyncSessionLocal() as session:
             item = await get_item(session, inventory_id, item_id)
             if not item:
                 return {"success": False, "error": f"Item {item_id} not found"}
 
-            item_name = item.name
-            lots = await get_lots_for_item(session, item_id)
-
-            if lot_id is not None:
-                # Remove from specific lot
-                lot = next((lt for lt in lots if lt.id == lot_id), None)
-                if not lot:
-                    return {"success": False, "error": f"Lot {lot_id} not found for item {item_name}"}
-
-                remove_qty = quantity if quantity else lot.quantity
-                txn_data = {"lot_id": lot_id, "quantity_removed": remove_qty}
-                await log_transaction(session, operation="UPDATE", item_id=item_id, data=txn_data)
-                await reduce_lot(session, lot_id, remove_qty)
-                date_str = lot.added_at.strftime('%b %d, %Y') if lot.added_at else 'unknown'
-                return {"success": True, "message": f"Removed {remove_qty} {item_name} from batch dated {date_str}"}
-
-            elif lots:
-                # Remove from oldest lot first
-                remove_qty = quantity if quantity else item.quantity
-                remaining = remove_qty
-                removed_from = []
-                for lot in lots:  # already sorted oldest first
-                    if remaining <= 0:
-                        break
-                    take = min(remaining, lot.quantity)
-                    await reduce_lot(session, lot.id, take)
-                    removed_from.append(f"{take} from batch {lot.added_at.strftime('%b %d, %Y') if lot.added_at else 'unknown'}")
-                    remaining -= take
-
-                actual_removed = remove_qty - remaining
-                txn_data = {"name": item_name, "quantity_removed": actual_removed}
-                await log_transaction(session, operation="DELETE", item_id=item_id, data=txn_data)
-                lots_detail = [
-                    {"lot_id": lt.id, "quantity": lt.quantity, "added_at": lt.added_at.isoformat() if lt.added_at else None}
-                    for lt in lots
-                ] if len(lots) > 1 else None
-                return {
-                    "success": True,
-                    "message": f"Removed {actual_removed} {item_name}: {', '.join(removed_from)}",
-                    "lots": lots_detail,
-                }
-            else:
-                # No lots (legacy item), fall back to direct quantity management
-                current_qty = item.quantity
-                if quantity is None or quantity >= current_qty:
-                    await log_transaction(session, operation="DELETE", item_id=item_id, data={"name": item_name})
-                    await delete_item(session, inventory_id, item_id)
-                    return {"success": True, "message": f"Removed all {current_qty} {item_name}"}
-                else:
-                    new_qty = current_qty - quantity
-                    await log_transaction(session, operation="UPDATE", item_id=item_id, data={"quantity_removed": quantity})
-                    await update_item(session, inventory_id, item_id, quantity=new_qty)
-                    return {"success": True, "message": f"Removed {quantity} {item_name}, {new_qty} remaining"}
+            remove_qty = quantity or item.quantity
+            desc = f"Remove {remove_qty} × {item.name}"
+            action_id = _store_pending_action(
+                user_id, "remove_item",
+                {"item_id": item_id, "quantity": quantity, "lot_id": lot_id},
+                desc, inventory_id,
+            )
+            return {
+                "success": True,
+                "requires_confirmation": True,
+                "action_id": action_id,
+                "description": desc,
+            }
 
     async def handle_search_items(query: str, location: str | None = None) -> dict:
         async with AsyncSessionLocal() as session:
@@ -1231,7 +1423,22 @@ async def _chat_with_ai(user_message: str, user_id: int, inventory_id: int) -> C
     }
 
     try:
+        # Snapshot pending action keys before the call
+        pre_keys = set(_pending_actions.keys())
         response_text = await process_chat_with_tools(user_message, tool_handlers)
+        # Check if a new pending action was created during tool execution
+        new_keys = set(_pending_actions.keys()) - pre_keys
+        if new_keys:
+            action_id = new_keys.pop()
+            pending = _pending_actions[action_id]
+            return ChatResponse(
+                response=response_text,
+                action="confirmation_required",
+                pending_action={
+                    "action_id": action_id,
+                    "description": pending["description"],
+                },
+            )
         return ChatResponse(response=response_text, action="ai_response")
     except (openai.OpenAIError, ValueError, json.JSONDecodeError) as e:
         logger.exception("AI chat error")
@@ -1244,6 +1451,92 @@ async def _chat_with_ai(user_message: str, user_id: int, inventory_id: int) -> C
         else:
             user_msg = "I had trouble processing that request. Try rephrasing or use the manual interface."
         return ChatResponse(response=user_msg, action="error")
+
+
+async def _execute_remove_item(inventory_id: int, item_id: int, quantity: int | None, lot_id: int | None) -> str:
+    """Execute a confirmed remove_item action and return a result message."""
+    async with AsyncSessionLocal() as session:
+        item = await get_item(session, inventory_id, item_id)
+        if not item:
+            return f"Item {item_id} no longer exists."
+
+        item_name = item.name
+        lots = await get_lots_for_item(session, item_id)
+
+        if lot_id is not None:
+            lot = next((lt for lt in lots if lt.id == lot_id), None)
+            if not lot:
+                return f"Lot {lot_id} not found for item {item_name}."
+            remove_qty = quantity if quantity else lot.quantity
+            await log_transaction(session, operation="UPDATE", item_id=item_id, data={"lot_id": lot_id, "quantity_removed": remove_qty})
+            await reduce_lot(session, lot_id, remove_qty)
+            date_str = lot.added_at.strftime('%b %d, %Y') if lot.added_at else 'unknown'
+            return f"Removed {remove_qty} {item_name} from batch dated {date_str}."
+
+        elif lots:
+            remove_qty = quantity if quantity else item.quantity
+            remaining = remove_qty
+            removed_from = []
+            for lot in lots:
+                if remaining <= 0:
+                    break
+                take = min(remaining, lot.quantity)
+                await reduce_lot(session, lot.id, take)
+                removed_from.append(f"{take} from batch {lot.added_at.strftime('%b %d, %Y') if lot.added_at else 'unknown'}")
+                remaining -= take
+            actual_removed = remove_qty - remaining
+            txn_data = {"name": item_name, "quantity_removed": actual_removed}
+            await log_transaction(session, operation="DELETE", item_id=item_id, data=txn_data)
+            return f"Removed {actual_removed} {item_name}: {', '.join(removed_from)}."
+
+        else:
+            current_qty = item.quantity
+            if quantity is None or quantity >= current_qty:
+                await log_transaction(session, operation="DELETE", item_id=item_id, data={"name": item_name})
+                await delete_item(session, inventory_id, item_id)
+                return f"Removed all {current_qty} {item_name}."
+            else:
+                new_qty = current_qty - quantity
+                await log_transaction(session, operation="UPDATE", item_id=item_id, data={"quantity_removed": quantity})
+                await update_item(session, inventory_id, item_id, quantity=new_qty)
+                return f"Removed {quantity} {item_name}, {new_qty} remaining."
+
+
+# Map of action names to executor functions
+_ACTION_EXECUTORS: dict[str, Any] = {
+    "remove_item": _execute_remove_item,
+}
+
+
+@api_router.post("/chat/confirm", response_model=ChatResponse)
+async def confirm_action(
+    request: Request,
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    body: ConfirmActionRequest,
+):
+    """Confirm or reject a pending destructive action."""
+    pending = _pending_actions.pop(body.action_id, None)
+    if not pending:
+        raise HTTPException(status_code=404, detail="Action expired or not found")
+    if pending["user_id"] != current_user.user_id:
+        # Put it back so the real owner can still confirm
+        _pending_actions[body.action_id] = pending
+        raise HTTPException(status_code=403, detail="Not authorized")
+    if pending["expires_at"] < time_module.time():
+        raise HTTPException(status_code=410, detail="Action expired")
+
+    if not body.confirmed:
+        return ChatResponse(response="Action cancelled.", action="cancelled")
+
+    executor = _ACTION_EXECUTORS.get(pending["action"])
+    if not executor:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {pending['action']}")
+
+    result_msg = await executor(
+        pending["inventory_id"],
+        **pending["params"],
+    )
+    return ChatResponse(response=result_msg, action="confirmed")
 
 
 async def _chat_fallback(user_message: str, inventory_id: int) -> ChatResponse:
@@ -1361,6 +1654,11 @@ async def serve_icon(icon_name: str):
         media_type = "image/svg+xml" if icon_name.endswith(".svg") else "image/png"
         return FileResponse(icon_path, media_type=media_type)
     raise HTTPException(status_code=404, detail="Icon not found")
+
+
+_js_dir = FRONTEND_DIR / "js"
+if _js_dir.exists():
+    app.mount("/js", StaticFiles(directory=str(_js_dir)), name="js")
 
 
 @app.get("/")
