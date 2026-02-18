@@ -354,7 +354,7 @@ async def register(request: Request, user_data: UserRegister):
         refresh_tok = create_refresh_token(user.id, user.email)
 
         response = JSONResponse(
-            content={"access_token": access_token, "refresh_token": refresh_tok, "token_type": "bearer"},
+            content={"access_token": access_token, "refresh_token": refresh_tok, "token_type": "bearer"},  # nosec B105
             status_code=status.HTTP_201_CREATED,
         )
         _set_token_cookie(response, access_token, secure=request.url.scheme == "https")
@@ -386,7 +386,7 @@ async def login(request: Request, form_data: Annotated[OAuth2PasswordRequestForm
         refresh_tok = create_refresh_token(user.id, user.email)
 
         response = JSONResponse(
-            content={"access_token": access_token, "refresh_token": refresh_tok, "token_type": "bearer"},
+            content={"access_token": access_token, "refresh_token": refresh_tok, "token_type": "bearer"},  # nosec B105
         )
         _set_token_cookie(response, access_token, secure=request.url.scheme == "https")
         return response
@@ -405,7 +405,7 @@ async def refresh_token(request: Request, body: RefreshTokenRequest):
     
     access_token = create_access_token(token_data.user_id, token_data.email)
     response = JSONResponse(
-        content={"access_token": access_token, "token_type": "bearer"},
+        content={"access_token": access_token, "token_type": "bearer"},  # nosec B105
     )
     _set_token_cookie(response, access_token, secure=request.url.scheme == "https")
     return response
@@ -1182,7 +1182,7 @@ async def _chat_with_ai(user_message: str, user_id: int, inventory_id: int) -> C
 
     async def handle_list_items(location: str | None = None, category: str | None = None) -> dict:
         async with AsyncSessionLocal() as session:
-            items = await list_items(session, inventory_id, location_name=location, category=category)
+            items, _total = await list_items(session, inventory_id, location_name=location, category=category)
             result_items = []
             for item in items:
                 lots = await get_lots_for_item(session, item.id)
@@ -1260,7 +1260,7 @@ async def _chat_fallback(user_message: str, inventory_id: int) -> ChatResponse:
                     location = loc_word.title()
                     break
             
-            items = await list_items(session, inventory_id, location_name=location)
+            items, _total = await list_items(session, inventory_id, location_name=location)
             
             if not items:
                 return ChatResponse(
