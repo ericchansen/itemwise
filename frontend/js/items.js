@@ -29,12 +29,31 @@ export async function loadInventory() {
         if (!items.length && currentOffset === 0) { list.innerHTML = ''; empty.classList.remove('hidden'); return; }
         empty.classList.add('hidden');
 
-        list.innerHTML = items.map(item => `
+        list.innerHTML = items.map(item => {
+            // Calculate expiration display
+            let expirationHTML = '';
+            if (item.expiration_date) {
+                const expiryDate = new Date(item.expiration_date);
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                expiryDate.setHours(0, 0, 0, 0);
+                const daysUntil = Math.ceil((expiryDate - today) / (1000 * 60 * 60 * 24));
+                
+                if (daysUntil < 0) {
+                    expirationHTML = ` · <span class="expired">expired ${expiryDate.toLocaleDateString()}</span>`;
+                } else if (daysUntil <= 7) {
+                    expirationHTML = ` · <span class="expiring-soon">expires ${expiryDate.toLocaleDateString()}</span>`;
+                } else {
+                    expirationHTML = ` · expires ${expiryDate.toLocaleDateString()}`;
+                }
+            }
+            
+            return `
             <div class="group flex items-center gap-4 p-4 bg-surface border border-border rounded-xl hover:border-muted transition-all">
                 <div class="w-10 h-10 bg-card rounded-lg flex items-center justify-center text-sm font-medium text-muted">${item.quantity}</div>
                 <div class="flex-1 min-w-0">
                     <div class="font-medium truncate">${item.name}</div>
-                    <div class="text-sm text-muted">${item.category}${item.location ? ' · ' + item.location : ''}${item.created_at ? ' · ' + new Date(item.created_at).toLocaleDateString() : ''}</div>
+                    <div class="text-sm text-muted">${item.category}${item.location ? ' · ' + item.location : ''}${item.created_at ? ' · ' + new Date(item.created_at).toLocaleDateString() : ''}${expirationHTML}</div>
                 </div>
                 <button onclick="window._deleteItem(${item.id})" class="p-2 text-muted opacity-0 group-hover:opacity-100 hover:text-red-400 transition-all">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -42,7 +61,8 @@ export async function loadInventory() {
                     </svg>
                 </button>
             </div>
-        `).join('');
+        `;
+        }).join('');
 
         // Show pagination for non-search results
         if (!search && data.total != null) {
@@ -94,19 +114,21 @@ export function hideAddItemModal() {
     const modal = document.getElementById('add-item-modal');
     modal.classList.add('hidden');
     modal.classList.remove('flex');
-    ['item-name', 'item-category', 'item-location', 'item-description'].forEach(id => document.getElementById(id).value = '');
+    ['item-name', 'item-category', 'item-location', 'item-expiration', 'item-description'].forEach(id => document.getElementById(id).value = '');
     document.getElementById('item-quantity').value = '1';
 }
 
 export async function handleAddItem(e) {
     e.preventDefault();
     const submitBtn = e.target.querySelector('button[type="submit"]');
+    const expirationDate = document.getElementById('item-expiration').value;
     const item = {
         name: document.getElementById('item-name').value,
         quantity: parseInt(document.getElementById('item-quantity').value),
         category: document.getElementById('item-category').value,
         location: document.getElementById('item-location').value || null,
-        description: document.getElementById('item-description').value || null
+        description: document.getElementById('item-description').value || null,
+        expiration_date: expirationDate || null
     };
     submitBtn.disabled = true;
     submitBtn.textContent = 'Adding...';
