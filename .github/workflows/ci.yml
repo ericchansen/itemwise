@@ -102,6 +102,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
+      - name: Enable pgvector extension
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -d inventory -c 'CREATE EXTENSION IF NOT EXISTS vector;'
+
       - name: Run database migrations
         run: uv run alembic upgrade head
 
