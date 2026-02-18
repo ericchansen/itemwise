@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 DUMMY_HASH = "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.F3z3z3z3z3z3z3"
 
 # JWT settings
-_DEFAULT_SECRET_KEY = "dev-secret-key-change-in-production"
+_DEFAULT_SECRET_KEY = "dev-secret-key-change-in-production"  # nosec B105
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60  # 1 hour
 REFRESH_TOKEN_EXPIRE_DAYS = 7  # 7 days

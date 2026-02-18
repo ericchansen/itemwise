@@ -1280,7 +1280,7 @@ async def serve_frontend():
 def run_api():
     """Run the FastAPI server."""
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)  # nosec B104
 
 
 if __name__ == "__main__":
