@@ -638,10 +638,16 @@ async def delete_account(
     current_user: Annotated[TokenData, Depends(get_current_user)],
 ):
     """Delete the currently authenticated user's account."""
-    async with AsyncSessionLocal() as session:
-        deleted = await delete_user(session, current_user.user_id)
-        if not deleted:
-            raise HTTPException(status_code=404, detail="User not found")
+    try:
+        async with AsyncSessionLocal() as session:
+            deleted = await delete_user(session, current_user.user_id)
+            if not deleted:
+                raise HTTPException(status_code=404, detail="User not found")
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("delete_account failed for user_id=%d", current_user.user_id)
+        raise HTTPException(status_code=500, detail="Failed to delete account")
     response = JSONResponse(content={"message": "Account deleted successfully"})
     response.delete_cookie(key="access_token", path="/")
     response.delete_cookie(key="csrf_token", path="/")

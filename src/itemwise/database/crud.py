@@ -884,9 +884,9 @@ async def get_user_by_email(
 async def delete_user(session: AsyncSession, user_id: int) -> bool:
     """Delete a user and clean up their data.
 
-    For inventories where the user is the sole member, the entire inventory
-    is deleted (FK cascades handle items, lots, locations, and memberships).
-    For shared inventories, only the user's membership record is removed.
+    For inventories where the user is the sole member, all inventory data
+    (items, lots, locations, memberships) is explicitly deleted, then the
+    inventory itself.  For shared inventories only the membership is removed.
 
     Args:
         session: Database session
@@ -917,18 +917,32 @@ async def delete_user(session: AsyncSession, user_id: int) -> bool:
         member_count = count_result.scalar_one()
 
         if member_count == 1:
-            # Sole member — delete entire inventory (FK cascades clean up)
-            inv_result = await session.execute(
-                select(Inventory).where(Inventory.id == membership.inventory_id)
+            inv_id = membership.inventory_id
+            logger.info(
+                "delete_user: deleting sole-member inventory id=%d for user_id=%d",
+                inv_id,
+                user_id,
             )
-            inventory = inv_result.scalar_one_or_none()
-            if inventory is not None:
-                logger.info(
-                    "delete_user: deleting sole-member inventory id=%d for user_id=%d",
-                    membership.inventory_id,
-                    user_id,
-                )
-                await session.delete(inventory)
+            # Use raw SQL deletes in correct FK dependency order so we
+            # don't hit constraint violations (DB may lack CASCADE).
+            item_ids = select(InventoryItem.id).where(
+                InventoryItem.inventory_id == inv_id
+            )
+            await session.execute(
+                delete(ItemLot).where(ItemLot.item_id.in_(item_ids))
+            )
+            await session.execute(
+                delete(InventoryItem).where(InventoryItem.inventory_id == inv_id)
+            )
+            await session.execute(
+                delete(Location).where(Location.inventory_id == inv_id)
+            )
+            await session.execute(
+                delete(InventoryMember).where(InventoryMember.inventory_id == inv_id)
+            )
+            await session.execute(
+                delete(Inventory).where(Inventory.id == inv_id)
+            )
         else:
             # Shared inventory — just remove the membership
             logger.info(

@@ -100,10 +100,10 @@ def fix_migration_state():
                 # before the last migration so it can apply cleanly
                 print("Schema created by init_db at version 0001 — stamping to latest base...")
                 conn.execute(
-                    text("UPDATE alembic_version SET version_num = '9b0a8afb6fae'")
+                    text("UPDATE alembic_version SET version_num = 'a1b2c3d4e5f6'")
                 )
                 conn.commit()
-                print("Stamped to 9b0a8afb6fae. Remaining migrations will run.")
+                print("Stamped to a1b2c3d4e5f6. Remaining migrations will run.")
             elif _has_table(conn, "inventories"):
                 print("Found partial init_db tables at version 0001 — dropping for clean migration...")
                 _drop_new_tables(conn)

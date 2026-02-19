@@ -46,8 +46,8 @@ class Inventory(Base):
 
     # Relationships
     members = relationship("InventoryMember", back_populates="inventory", cascade="all, delete-orphan")
-    items = relationship("InventoryItem", back_populates="inventory")
-    locations = relationship("Location", back_populates="inventory")
+    items = relationship("InventoryItem", back_populates="inventory", cascade="all, delete-orphan")
+    locations = relationship("Location", back_populates="inventory", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<Inventory(id={self.id}, name='{self.name}')>"
@@ -85,7 +85,7 @@ class Location(Base):
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    inventory_id: Mapped[int] = mapped_column(Integer, ForeignKey("inventories.id"), nullable=False, index=True)
+    inventory_id: Mapped[int] = mapped_column(Integer, ForeignKey("inventories.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False, index=True)  # Display name (e.g., "Tim's Pocket")
     normalized_name: Mapped[str] = mapped_column(String, nullable=False, index=True)  # For matching (e.g., "tims pocket")
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -121,7 +121,7 @@ class InventoryItem(Base):
     location_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("locations.id"), nullable=True, index=True
     )
-    inventory_id: Mapped[int] = mapped_column(Integer, ForeignKey("inventories.id"), nullable=False, index=True)
+    inventory_id: Mapped[int] = mapped_column(Integer, ForeignKey("inventories.id", ondelete="CASCADE"), nullable=False, index=True)
     embedding: Mapped[Optional[list[float]]] = mapped_column(
         Vector(EMBEDDING_DIMENSION), nullable=True
     )
