@@ -11,7 +11,6 @@ Chat tests require Azure OpenAI — they are skipped when chat returns errors.
 """
 
 import os
-import time
 
 import pytest
 from playwright.sync_api import Page, expect, sync_playwright
@@ -19,8 +18,9 @@ from playwright.sync_api import Page, expect, sync_playwright
 BASE_URL = os.environ.get("E2E_BASE_URL", "http://localhost:8080")
 _REMOTE = not BASE_URL.startswith("http://localhost")
 
-_ts = int(time.time())
-TEST_EMAIL = f"e2e-{_ts}@test.com"
+# Deterministic emails so cleanup works even after interrupted runs
+TEST_EMAIL = "e2e-test@test.com"
+REG_EMAIL = "e2e-reg@test.com"
 TEST_PASSWORD = "TestPass1234!"
 
 
@@ -66,11 +66,19 @@ def _delete_account(email: str, password: str):
 
 
 @pytest.fixture(scope="module", autouse=True)
-def cleanup_after_tests():
-    """Clean up test accounts after all E2E tests complete."""
-    yield
+def cleanup_test_accounts():
+    """Delete leftover test accounts before AND after E2E tests.
+
+    Pre-test cleanup handles orphans from interrupted previous runs.
+    Post-test cleanup handles the current run's accounts.
+    """
+    # Pre-test: clean up any leftover accounts from previous runs
     _delete_account(TEST_EMAIL, TEST_PASSWORD)
-    _delete_account(f"e2e-reg-{_ts}@test.com", TEST_PASSWORD)
+    _delete_account(REG_EMAIL, TEST_PASSWORD)
+    yield
+    # Post-test: clean up accounts created during this run
+    _delete_account(TEST_EMAIL, TEST_PASSWORD)
+    _delete_account(REG_EMAIL, TEST_PASSWORD)
 
 
 def _ensure_user_registered():
@@ -143,17 +151,16 @@ class TestE2EAuth:
 
     def test_register_and_see_app(self, page):
         """Register creates account and shows main app."""
-        reg_email = f"e2e-reg-{_ts}@test.com"
         page.goto(BASE_URL)
         page.wait_for_selector("#auth-screen", state="visible", timeout=10000)
 
         page.click("#auth-tab-register")
-        page.fill("#auth-email", reg_email)
+        page.fill("#auth-email", REG_EMAIL)
         page.fill("#auth-password", TEST_PASSWORD)
         page.click("#auth-submit")
 
-        page.wait_for_selector("#auth-screen", state="hidden", timeout=15000)
-        expect(page.locator("#chat-input")).to_be_visible(timeout=10000)
+        page.wait_for_selector("#auth-screen", state="hidden", timeout=30000 if _REMOTE else 15000)
+        expect(page.locator("#chat-input")).to_be_visible(timeout=15000 if _REMOTE else 10000)
 
     def test_login_existing_user(self, page):
         """Login with registered user works."""
