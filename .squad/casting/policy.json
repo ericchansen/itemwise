@@ -1,0 +1,15 @@
+{
+  "default_universe": null,
+  "allowed_universes": [
+    "alien-1979", "the-usual-suspects", "firefly", "the-thing-1982",
+    "blade-runner", "mad-max-fury-road", "the-matrix", "predator",
+    "terminator", "die-hard", "heat", "oceans-eleven",
+    "ghostbusters", "star-wars-ot", "jurassic-park", "back-to-the-future",
+    "the-shining", "jaws", "indiana-jones", "the-departed",
+    "no-country-for-old-men", "sicario", "the-wire", "breaking-bad",
+    "succession", "severance", "dune", "lord-of-the-rings",
+    "hitchhikers-guide", "portal", "enders-game"
+  ],
+  "max_capacity_per_universe": 25,
+  "reuse_retired_names": false
+}
