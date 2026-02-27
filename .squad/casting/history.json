@@ -1,0 +1,11 @@
+{
+  "assignments": [
+    {
+      "assignment_id": "itemwise-init-2026-02-27",
+      "universe": "firefly",
+      "created_at": "2026-02-27T21:35:00Z",
+      "agents": ["Mal", "Kaylee", "Wash", "Jayne", "Simon", "Zoe"],
+      "reason": "Initial team creation for Itemwise inventory assistant"
+    }
+  ]
+}
