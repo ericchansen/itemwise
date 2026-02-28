@@ -20,6 +20,7 @@ WORKDIR /app
 # Install only runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy virtual environment from builder
@@ -41,7 +42,7 @@ EXPOSE 8080
 
 # Health check - uses unauthenticated /health endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-    CMD python -c "import httpx; r=httpx.get('http://localhost:8080/health', timeout=5); exit(0 if r.json().get('status')=='healthy' else 1)"
+    CMD curl -f http://localhost:8080/health || exit 1
 
 # Run migrations then start the application
 CMD ["sh", "start.sh"]
