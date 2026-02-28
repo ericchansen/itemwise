@@ -257,6 +257,31 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json('0.5')
             memory: '1Gi'
           }
+          probes: [
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/health'
+                port: 8080
+                scheme: 'HTTP'
+              }
+              periodSeconds: 30
+              failureThreshold: 3
+              timeoutSeconds: 5
+            }
+            {
+              type: 'Startup'
+              httpGet: {
+                path: '/health'
+                port: 8080
+                scheme: 'HTTP'
+              }
+              periodSeconds: 10
+              failureThreshold: 30
+              initialDelaySeconds: 5
+              timeoutSeconds: 5
+            }
+          ]
           env: [
             {
               name: 'POSTGRES_HOST'

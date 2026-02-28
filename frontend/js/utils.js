@@ -23,5 +23,15 @@ export function renderMarkdown(text) {
         .replace(/\n/g, '<br>');
 }
 
+export function showConnectionError(error) {
+    if (error?.message === 'Unauthorized') return;
+    const el = document.getElementById('connection-error');
+    if (!el) return;
+    const msg = (error instanceof TypeError)
+        ? "⚠️ Can't connect to server. Please try again later."
+        : "⚠️ Something went wrong. Please try again later.";
+    showAlert(el, msg);
+}
+
 // Expose dismissAlert globally for onclick in showAlert
 window._dismissAlert = dismissAlert;
