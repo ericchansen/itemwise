@@ -27,6 +27,14 @@ class TestDatabaseEngine:
         # Engine should be using asyncpg driver
         assert "asyncpg" in str(engine.url)
 
+    def test_pool_pre_ping_enabled(self) -> None:
+        """Verify pool_pre_ping is True to detect stale connections."""
+        assert engine.pool._pre_ping is True
+
+    def test_pool_recycle_set(self) -> None:
+        """Verify pool_recycle=3600 to handle Azure PostgreSQL auto-stop."""
+        assert engine.pool._recycle == 3600
+
 
 class TestSessionFactory:
     """Tests for session factory."""
