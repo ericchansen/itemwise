@@ -23,6 +23,9 @@ jobs:
   deploy:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ env.PROD_URL }}
 
     steps:
       - uses: actions/checkout@v4
@@ -105,3 +108,14 @@ jobs:
         env:
           E2E_BASE_URL: ${{ env.PROD_URL }}
         run: uv run python -m pytest tests/test_e2e.py -v -m e2e --no-cov
+
+      - name: Deployment summary
+        if: always()
+        run: |
+          echo "## 🚀 Production Deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Detail | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|--------|-------|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **URL** | ${PROD_URL} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Commit** | \`${GITHUB_SHA::8}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **Timestamp** | $(date -u +'%Y-%m-%d %H:%M:%S UTC') |" >> "$GITHUB_STEP_SUMMARY"
