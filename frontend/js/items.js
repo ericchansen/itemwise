@@ -1,6 +1,7 @@
 // Items management
 import { API_URL, PAGE_SIZE, currentOffset, setCurrentOffset, searchTimeout, setSearchTimeout } from './state.js';
 import { authFetch } from './auth.js';
+import { showConnectionError } from './utils.js';
 
 export async function loadInventory() {
     const search = document.getElementById('search-input').value;
@@ -73,7 +74,10 @@ export async function loadInventory() {
             document.getElementById('next-btn').disabled = currentOffset + PAGE_SIZE >= data.total;
             pagination.classList.remove('hidden');
         }
-    } catch (e) { list.innerHTML = ''; console.error(e); }
+    } catch (e) {
+        list.innerHTML = '<div class="py-12 text-center"><span class="text-red-400 text-sm">⚠️ Could not load items</span></div>';
+        showConnectionError(e);
+    }
 }
 
 export function prevPage() {
@@ -95,7 +99,7 @@ export async function loadLocations() {
         select.innerHTML = '<option value="">All locations</option>' +
             data.locations.map(l => `<option value="${l.name}">${l.name}</option>`).join('');
         select.value = val;
-    } catch (e) {}
+    } catch (e) { showConnectionError(e); }
 }
 
 export function debounceSearch() {
@@ -140,6 +144,7 @@ export async function handleAddItem(e) {
         });
         if (res.ok) { hideAddItemModal(); loadInventory(); loadLocations(); }
     } catch (e) {
+        showConnectionError(e);
     } finally {
         submitBtn.disabled = false;
         submitBtn.textContent = 'Add';
@@ -151,5 +156,5 @@ export async function deleteItem(id) {
     try {
         const res = await authFetch(`${API_URL}/api/v1/items/${id}`, { method: 'DELETE' });
         if (res.ok) loadInventory();
-    } catch (e) {}
+    } catch (e) { showConnectionError(e); }
 }

@@ -1,6 +1,7 @@
 // Settings and admin functionality
 import { API_URL, activeInventoryId, setActiveInventoryId, setCurrentOffset } from './state.js';
 import { authFetch } from './auth.js';
+import { showConnectionError } from './utils.js';
 import { loadInventory, loadLocations } from './items.js';
 
 export async function loadInventories() {
@@ -21,7 +22,7 @@ export async function loadInventories() {
         } else {
             document.getElementById('inventory-selector-row').classList.add('hidden');
         }
-    } catch (e) { console.error('Failed to load inventories', e); }
+    } catch (e) { showConnectionError(e); }
 }
 
 export function switchInventory() {
@@ -36,7 +37,7 @@ export async function loadProfile() {
         const res = await authFetch(`${API_URL}/api/v1/auth/me`);
         const data = await res.json();
         document.getElementById('profile-email').textContent = data.email;
-    } catch(e) { console.error('Failed to load profile', e); }
+    } catch(e) { showConnectionError(e); }
 }
 
 export async function handleChangePassword(event) {
@@ -92,7 +93,7 @@ export async function loadMembers() {
                 <span class="text-xs text-muted">${m.joined_at ? new Date(m.joined_at).toLocaleDateString() : ''}</span>
             </div>
         `).join('') || '<p class="text-muted text-sm">No members yet</p>';
-    } catch (e) { console.error(e); }
+    } catch (e) { showConnectionError(e); }
 }
 
 export async function handleAddMember(e) {
