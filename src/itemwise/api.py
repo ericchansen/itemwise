@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Annotated, Any, Optional
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, UploadFile, File, Form, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -1630,6 +1630,151 @@ async def _chat_fallback(user_message: str, inventory_id: int) -> ChatResponse:
                 "Note: Azure OpenAI is not configured. Set AZURE_OPENAI_ENDPOINT to enable "
                 "full natural language understanding including adding/removing items.",
             )
+
+
+class ImageAnalysisResponse(BaseModel):
+    response: str
+    items: list[dict[str, Any]] = []
+    action: str | None = None
+
+
+class ImageAddItemsRequest(BaseModel):
+    items: list[dict[str, Any]] = Field(..., description="Items to add (name, quantity, category)")
+    location: str = Field(..., description="Location to add items to")
+
+
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB
+
+
+@api_router.post("/chat/image", response_model=ImageAnalysisResponse)
+@limiter.limit("5/minute")
+async def chat_image(
+    request: Request,
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
+    image: UploadFile = File(...),
+    message: str | None = Form(None),
+):
+    """Analyze an uploaded image to identify inventory items.
+
+    Accepts JPEG, PNG, WebP, or GIF images up to 10 MB.
+    Returns a list of identified items the user can add to a location.
+    """
+    # Validate content type
+    content_type = image.content_type or ""
+    if content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported image type: {content_type}. Use JPEG, PNG, WebP, or GIF.",
+        )
+
+    # Read and validate size
+    image_data = await image.read()
+    if len(image_data) > MAX_IMAGE_SIZE:
+        raise HTTPException(status_code=400, detail="Image too large. Maximum size is 10 MB.")
+    if len(image_data) == 0:
+        raise HTTPException(status_code=400, detail="Empty image file.")
+
+    if not AZURE_OPENAI_ENABLED:
+        return ImageAnalysisResponse(
+            response="Image analysis requires Azure OpenAI. Please configure it first.",
+            items=[],
+            action="error",
+        )
+
+    try:
+        from .ai_client import analyze_image
+        items = analyze_image(image_data, content_type, user_hint=message)
+    except Exception:
+        logger.exception("Image analysis error")
+        return ImageAnalysisResponse(
+            response="I had trouble analyzing that image. Try a clearer photo or describe the items instead.",
+            items=[],
+            action="error",
+        )
+
+    if not items:
+        return ImageAnalysisResponse(
+            response="I couldn't identify any inventory items in that image. Try a clearer photo or a different angle.",
+            items=[],
+            action="ai_response",
+        )
+
+    # Build a conversational response
+    item_lines = []
+    for item in items:
+        qty = item.get("quantity", 1)
+        name = item.get("name", "unknown item")
+        cat = item.get("category", "")
+        line = f"• {qty}× {name}" + (f" ({cat})" if cat else "")
+        item_lines.append(line)
+
+    response_text = f"I see {len(items)} item(s) in the image:\n" + "\n".join(item_lines)
+    response_text += "\n\nWant me to add these to a location? Just tell me where!"
+
+    return ImageAnalysisResponse(
+        response=response_text,
+        items=items,
+        action="items_identified",
+    )
+
+
+@api_router.post("/chat/image/add", response_model=ChatResponse)
+@limiter.limit("10/minute")
+async def chat_image_add_items(
+    request: Request,
+    current_user: Annotated[TokenData, Depends(get_current_user)],
+    inventory_id: Annotated[int, Depends(get_active_inventory_id)],
+    body: ImageAddItemsRequest,
+):
+    """Add items identified from image analysis to a specific location."""
+    from .ai_client import generate_display_name
+
+    added = []
+    async with AsyncSessionLocal() as session:
+        display_name = None
+        try:
+            display_name = generate_display_name(body.location.strip())
+        except (ValueError, AttributeError):
+            pass
+        loc = await get_or_create_location(session, inventory_id, body.location.strip(), display_name=display_name)
+
+        for item_data in body.items:
+            name = item_data.get("name", "unknown")
+            quantity = int(item_data.get("quantity", 1))
+            category = item_data.get("category", "general")
+            description = item_data.get("description")
+
+            item_text = _get_item_text_for_embedding(name, description, category)
+            embedding = generate_embedding(item_text)
+
+            await log_transaction(
+                session,
+                operation="CREATE",
+                data={"name": name, "quantity": quantity, "category": category, "location": loc.name, "source": "image_analysis"},
+            )
+
+            new_item = await create_item(
+                session,
+                inventory_id=inventory_id,
+                name=name,
+                quantity=0,
+                category=category,
+                description=description,
+                location_id=loc.id,
+                embedding=embedding,
+            )
+            await create_lot(
+                session,
+                item_id=new_item.id,
+                quantity=quantity,
+                added_by_user_id=current_user.user_id,
+            )
+            added.append(f"{quantity}× {name}")
+
+    response_text = f"Added {len(added)} item(s) to {loc.name}: {', '.join(added)}."
+    return ChatResponse(response=response_text, action="ai_response")
 
 
 # ===== Mount API router at both /api (backward compat) and /api/v1 =====
