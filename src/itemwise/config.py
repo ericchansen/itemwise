@@ -1,5 +1,7 @@
 """Configuration settings for the application."""
 
+from urllib.parse import quote
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -34,7 +36,7 @@ class Settings(BaseSettings):
     def database_url(self) -> str:
         """Construct the database URL for async PostgreSQL connection."""
         base_url = (
-            f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}"
+            f"postgresql+asyncpg://{quote(self.postgres_user, safe='')}:{quote(self.postgres_password, safe='')}"
             f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
         )
         # Add SSL for Azure PostgreSQL
