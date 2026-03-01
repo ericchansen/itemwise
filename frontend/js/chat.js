@@ -1,7 +1,7 @@
 // Chat functionality
 import { API_URL } from './state.js';
 import { authFetch } from './auth.js';
-import { renderMarkdown } from './utils.js';
+import { renderMarkdown, showConnectionError } from './utils.js';
 
 // Track selected image for upload
 let _pendingImage = null;
@@ -50,7 +50,7 @@ async function confirmAction(actionId, confirmed) {
             addMessage(data.detail || 'Action failed.');
         }
     } catch (e) {
-        if (e.message !== 'Unauthorized') addMessage('Connection error. Try again.');
+        showConnectionError(e);
     }
     if (confirmDiv) confirmDiv.remove();
 }
@@ -79,7 +79,7 @@ export async function sendMessage(text) {
             addConfirmation(data.pending_action.action_id, data.pending_action.description);
         }
     } catch (e) {
-        if (e.message !== 'Unauthorized') addMessage('Connection error. Try again.');
+        showConnectionError(e);
     } finally {
         sendBtn.disabled = false;
         sendBtn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M12 5l7 7-7 7"/></svg>';
@@ -173,7 +173,7 @@ async function sendImageMessage() {
             addMessage(data.response || data.detail || 'Could not analyze image.');
         }
     } catch (e) {
-        if (e.message !== 'Unauthorized') addMessage('Connection error. Try again.');
+        showConnectionError(e);
     } finally {
         clearImagePreview();
         sendBtn.disabled = false;
@@ -232,7 +232,7 @@ async function addImageItems() {
             addMessage(data.detail || 'Failed to add items.');
         }
     } catch (e) {
-        if (e.message !== 'Unauthorized') addMessage('Connection error. Try again.');
+        showConnectionError(e);
     }
     _identifiedItems = null;
     if (prompt) prompt.remove();

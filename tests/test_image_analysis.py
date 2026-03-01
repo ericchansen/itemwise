@@ -17,6 +17,11 @@ from itemwise.database.models import User
 
 VALID_PASSWORD = "TestPass1!"
 
+# Valid PNG magic bytes (8-byte signature)
+VALID_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 10
+# Valid JPEG magic bytes
+VALID_JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 10
+
 
 @pytest.fixture(autouse=True)
 def _reset_limiter():
@@ -176,7 +181,7 @@ class TestChatImageEndpoint:
         with patch("itemwise.api.AZURE_OPENAI_ENABLED", False):
             resp = await client.post(
                 "/api/v1/chat/image",
-                files={"image": ("test.png", b"\x89PNG\r\n", "image/png")},
+                files={"image": ("test.png", VALID_PNG, "image/png")},
                 headers=headers,
             )
         assert resp.status_code == 200
@@ -197,7 +202,7 @@ class TestChatImageEndpoint:
              patch("itemwise.ai_client.analyze_image", return_value=mock_items):
             resp = await client.post(
                 "/api/v1/chat/image",
-                files={"image": ("test.png", b"\x89PNG\r\n", "image/png")},
+                files={"image": ("test.png", VALID_PNG, "image/png")},
                 headers=headers,
             )
 
@@ -217,7 +222,7 @@ class TestChatImageEndpoint:
              patch("itemwise.ai_client.analyze_image", return_value=mock_items):
             resp = await client.post(
                 "/api/v1/chat/image",
-                files={"image": ("test.png", b"\x89PNG\r\n", "image/png")},
+                files={"image": ("test.png", VALID_PNG, "image/png")},
                 headers=headers,
             )
 
@@ -237,7 +242,7 @@ class TestChatImageEndpoint:
              patch("itemwise.ai_client.analyze_image", return_value=[]):
             resp = await client.post(
                 "/api/v1/chat/image",
-                files={"image": ("test.png", b"\x89PNG\r\n", "image/png")},
+                files={"image": ("test.png", VALID_PNG, "image/png")},
                 headers=headers,
             )
 
@@ -250,9 +255,72 @@ class TestChatImageEndpoint:
     async def test_requires_auth(self, client: AsyncClient) -> None:
         resp = await client.post(
             "/api/v1/chat/image",
-            files={"image": ("test.png", b"\x89PNG\r\n", "image/png")},
+            files={"image": ("test.png", VALID_PNG, "image/png")},
         )
         assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_rejects_oversized_file(
+        self, client: AsyncClient, known_user: User
+    ) -> None:
+        headers = auth_header(known_user.id, known_user.email)
+        # 10 MB + 1 byte
+        big_data = b"\x89PNG\r\n\x1a\n" + b"\x00" * (10 * 1024 * 1024)
+        resp = await client.post(
+            "/api/v1/chat/image",
+            files={"image": ("big.png", big_data, "image/png")},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "too large" in resp.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_rejects_spoofed_content_type(
+        self, client: AsyncClient, known_user: User
+    ) -> None:
+        """File claims to be PNG but content is JPEG."""
+        headers = auth_header(known_user.id, known_user.email)
+        jpeg_bytes = b"\xff\xd8\xff\xe0" + b"\x00" * 100
+        resp = await client.post(
+            "/api/v1/chat/image",
+            files={"image": ("fake.png", jpeg_bytes, "image/png")},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "does not match" in resp.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_rejects_non_image_with_image_content_type(
+        self, client: AsyncClient, known_user: User
+    ) -> None:
+        """File claims to be PNG but is actually a text file."""
+        headers = auth_header(known_user.id, known_user.email)
+        resp = await client.post(
+            "/api/v1/chat/image",
+            files={"image": ("fake.png", b"not an image at all", "image/png")},
+            headers=headers,
+        )
+        assert resp.status_code == 400
+        assert "does not match" in resp.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_truncates_long_user_hint(
+        self, client: AsyncClient, known_user: User
+    ) -> None:
+        headers = auth_header(known_user.id, known_user.email)
+        long_hint = "A" * 1000
+        with patch("itemwise.api.AZURE_OPENAI_ENABLED", True), \
+             patch("itemwise.ai_client.analyze_image", return_value=[]) as mock_analyze:
+            resp = await client.post(
+                "/api/v1/chat/image",
+                files={"image": ("test.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 10, "image/png")},
+                data={"message": long_hint},
+                headers=headers,
+            )
+        assert resp.status_code == 200
+        # Verify the hint was truncated to 500 chars
+        call_args = mock_analyze.call_args
+        assert len(call_args.kwargs.get("user_hint", call_args[0][2] if len(call_args[0]) > 2 else "")) <= 500
 
 
 class TestChatImageAddEndpoint:
@@ -303,3 +371,29 @@ class TestChatImageAddEndpoint:
             json={"items": [], "location": "Pantry"},
         )
         assert resp.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_clamps_unrealistic_quantities(
+        self, client: AsyncClient, known_user: User, db_session: AsyncSession
+    ) -> None:
+        """Quantities should be clamped to 1-999 range."""
+        headers = auth_header(known_user.id, known_user.email)
+
+        items = [
+            {"name": "canned soup", "quantity": 5000, "category": "canned"},
+            {"name": "rice", "quantity": -3, "category": "grain"},
+        ]
+
+        with patch("itemwise.api.generate_embedding", return_value=[0.0] * 1536):
+            resp = await client.post(
+                "/api/v1/chat/image/add",
+                json={"items": items, "location": "Pantry"},
+                headers=headers,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        # Quantity 5000 should be clamped to 999
+        assert "999× canned soup" in data["response"]
+        # Quantity -3 should be clamped to 1
+        assert "1× rice" in data["response"]
