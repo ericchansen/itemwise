@@ -62,3 +62,8 @@ coverage.xml
 
 
 *.png
+
+# Squad templates (should not be committed)
+.squad-templates/
+.github/workflows/squad-*.yml
+.github/workflows/sync-squad-labels.yml
