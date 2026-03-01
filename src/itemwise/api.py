@@ -1645,6 +1645,32 @@ class ImageAddItemsRequest(BaseModel):
 
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 MAX_IMAGE_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_USER_HINT_LENGTH = 500
+MAX_ITEM_QUANTITY = 999
+
+# Magic byte signatures for image file validation
+IMAGE_MAGIC_BYTES = {
+    b"\xff\xd8\xff": "image/jpeg",
+    b"\x89PNG\r\n\x1a\n": "image/png",
+    b"RIFF": "image/webp",  # WebP starts with RIFF....WEBP
+    b"GIF87a": "image/gif",
+    b"GIF89a": "image/gif",
+}
+
+
+def _validate_image_magic_bytes(data: bytes, claimed_type: str) -> bool:
+    """Validate that file content matches claimed image type via magic bytes."""
+    for magic, mime in IMAGE_MAGIC_BYTES.items():
+        if data[:len(magic)] == magic:
+            if claimed_type == mime:
+                return True
+            # WebP: RIFF header must also contain WEBP at offset 8
+            if magic == b"RIFF" and len(data) >= 12 and data[8:12] == b"WEBP":
+                return claimed_type == "image/webp"
+            if magic == b"RIFF":
+                continue  # RIFF but not WEBP
+            return False
+    return False
 
 
 @api_router.post("/chat/image", response_model=ImageAnalysisResponse)
@@ -1675,6 +1701,17 @@ async def chat_image(
         raise HTTPException(status_code=400, detail="Image too large. Maximum size is 10 MB.")
     if len(image_data) == 0:
         raise HTTPException(status_code=400, detail="Empty image file.")
+
+    # Validate magic bytes match claimed content type
+    if not _validate_image_magic_bytes(image_data, content_type):
+        raise HTTPException(
+            status_code=400,
+            detail="File content does not match declared image type.",
+        )
+
+    # Truncate user hint to prevent prompt injection via oversized input
+    if message and len(message) > MAX_USER_HINT_LENGTH:
+        message = message[:MAX_USER_HINT_LENGTH]
 
     if not AZURE_OPENAI_ENABLED:
         return ImageAnalysisResponse(
@@ -1732,6 +1769,7 @@ async def chat_image_add_items(
     from .ai_client import generate_display_name
 
     added = []
+    errors = []
     async with AsyncSessionLocal() as session:
         display_name = None
         try:
@@ -1739,41 +1777,48 @@ async def chat_image_add_items(
         except (ValueError, AttributeError):
             pass
         loc = await get_or_create_location(session, inventory_id, body.location.strip(), display_name=display_name)
+        location_name = loc.name  # Capture before session closes
 
         for item_data in body.items:
             name = item_data.get("name", "unknown")
-            quantity = int(item_data.get("quantity", 1))
+            quantity = max(1, min(int(item_data.get("quantity", 1)), MAX_ITEM_QUANTITY))
             category = item_data.get("category", "general")
             description = item_data.get("description")
 
-            item_text = _get_item_text_for_embedding(name, description, category)
-            embedding = generate_embedding(item_text)
+            try:
+                item_text = _get_item_text_for_embedding(name, description, category)
+                embedding = generate_embedding(item_text)
 
-            await log_transaction(
-                session,
-                operation="CREATE",
-                data={"name": name, "quantity": quantity, "category": category, "location": loc.name, "source": "image_analysis"},
-            )
+                await log_transaction(
+                    session,
+                    operation="CREATE",
+                    data={"name": name, "quantity": quantity, "category": category, "location": location_name, "source": "image_analysis"},
+                )
 
-            new_item = await create_item(
-                session,
-                inventory_id=inventory_id,
-                name=name,
-                quantity=0,
-                category=category,
-                description=description,
-                location_id=loc.id,
-                embedding=embedding,
-            )
-            await create_lot(
-                session,
-                item_id=new_item.id,
-                quantity=quantity,
-                added_by_user_id=current_user.user_id,
-            )
-            added.append(f"{quantity}× {name}")
+                new_item = await create_item(
+                    session,
+                    inventory_id=inventory_id,
+                    name=name,
+                    quantity=0,
+                    category=category,
+                    description=description,
+                    location_id=loc.id,
+                    embedding=embedding,
+                )
+                await create_lot(
+                    session,
+                    item_id=new_item.id,
+                    quantity=quantity,
+                    added_by_user_id=current_user.user_id,
+                )
+                added.append(f"{quantity}× {name}")
+            except Exception:
+                logger.exception(f"Failed to add item '{name}' from image analysis")
+                errors.append(name)
 
-    response_text = f"Added {len(added)} item(s) to {loc.name}: {', '.join(added)}."
+    response_text = f"Added {len(added)} item(s) to {location_name}: {', '.join(added)}."
+    if errors:
+        response_text += f" Failed to add: {', '.join(errors)}."
     return ChatResponse(response=response_text, action="ai_response")
 
 
