@@ -3,6 +3,7 @@ param tags object
 param resourceToken string
 param azureOpenAiDeployment string
 param azureOpenAiEmbeddingDeployment string
+param azureOpenAiVisionDeployment string
 
 @secure()
 param postgresPassword string
@@ -92,6 +93,23 @@ resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
     }
   }
   dependsOn: [chatDeployment]
+}
+
+resource visionDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = {
+  parent: openAi
+  name: azureOpenAiVisionDeployment
+  sku: {
+    name: 'GlobalStandard'
+    capacity: 10
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: 'gpt-4o'
+      version: '2024-08-06'
+    }
+  }
+  dependsOn: [embeddingDeployment]
 }
 
 // User Assigned Managed Identity
@@ -318,6 +336,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'AZURE_OPENAI_EMBEDDING_DEPLOYMENT'
               value: azureOpenAiEmbeddingDeployment
+            }
+            {
+              name: 'AZURE_OPENAI_VISION_DEPLOYMENT'
+              value: azureOpenAiVisionDeployment
             }
             {
               name: 'AZURE_CLIENT_ID'

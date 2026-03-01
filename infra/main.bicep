@@ -14,6 +14,9 @@ param azureOpenAiDeployment string = 'gpt-4o-mini'
 @description('Azure OpenAI embedding deployment name')
 param azureOpenAiEmbeddingDeployment string = 'text-embedding-3-small'
 
+@description('Azure OpenAI vision deployment name')
+param azureOpenAiVisionDeployment string = 'gpt-4o'
+
 @description('PostgreSQL administrator password')
 @secure()
 param postgresPassword string
@@ -41,6 +44,7 @@ module resources './resources.bicep' = {
     resourceToken: resourceToken
     azureOpenAiDeployment: azureOpenAiDeployment
     azureOpenAiEmbeddingDeployment: azureOpenAiEmbeddingDeployment
+    azureOpenAiVisionDeployment: azureOpenAiVisionDeployment
     postgresPassword: postgresPassword
   }
 }
