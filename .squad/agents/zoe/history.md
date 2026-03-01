@@ -15,3 +15,15 @@
 - Test patterns: async tests use `pytest.mark.asyncio`, httpx `AsyncClient` with `ASGITransport`, mock DB via `patch("itemwise.api.AsyncSessionLocal", ...)`
 - `conftest.py` has autouse `mock_embeddings` fixture — all tests get mocked embeddings by default
 - Health endpoint is at `/health` (not under `/api/v1`), catches `SQLAlchemyError | OSError`
+
+### 2026-02-28: Image Analysis Test Review
+- Reviewed `tests/test_image_analysis.py` (15 tests) for `feat/image-analysis` branch
+- All tests pass (15/15), good coverage of happy paths and validation
+- Test fixture patterns: autouse `_reset_limiter()`, `patch_db`, async `client`, `known_user`, `auth_header()` helper
+- Image endpoints: `POST /api/v1/chat/image` (5/min limit), `POST /api/v1/chat/image/add` (10/min limit)
+- Coverage gaps identified: no tests for file size limit (10 MB), concurrent uploads, network errors from vision API, actual rate limit breach (5/min)
+- Mock patterns: `patch("itemwise.api.AZURE_OPENAI_ENABLED")` and `patch("itemwise.ai_client.analyze_image")` correctly patched at call sites
+- `analyze_image()` parsing tested: JSON, markdown fences, invalid JSON, non-list, user hint passing
+- Endpoints tested: unsupported file type, empty file, OpenAI disabled, successful analysis, items found/not found, auth required, validation errors
+- Missing: E2E test for browser-based image upload (Playwright with file upload fixture)
+- `test_config.py` change: correctly updates URL-encoding assertion from raw `p@ss:word!` to encoded `p%40ss%3Aword%21`

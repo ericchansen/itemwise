@@ -11,3 +11,4 @@
 - **Health endpoint** at `/health` in `src/itemwise/api.py` (line ~369) — runs `SELECT 1`, returns 503 with `{"status": "unhealthy", "dependencies": {"database": "unhealthy"}}` when DB is down. Mounted on root app, not behind `/api` prefix.
 - **Azure PostgreSQL Flexible Server (B1ms)** auto-pauses after ~7 days of inactivity — `pool_recycle=3600` + `pool_pre_ping=True` handles stale connections on resume
 - **Pre-existing test failures**: `test_sharing.py` and `test_soft_delete.py` have 78 errors (schema/migration issues), unrelated to engine config
+- **Image analysis feature (`feat/image-analysis` branch)**: Reviewed 2026-02-28. Found 1 critical bug (missing session.commit in bulk add loop), 1 error handling gap (no try-catch around create_item/create_lot), and 1 API design issue (loc variable out of scope). Vision API integration is solid, file validation is correct, rate limits are reasonable.
