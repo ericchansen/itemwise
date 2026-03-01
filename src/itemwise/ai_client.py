@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
+import base64
+
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from openai import AzureOpenAI
 
@@ -377,3 +379,71 @@ def generate_display_name(raw_name: str) -> str:
             result_words.append(word.title())
     
     return " ".join(result_words)
+
+
+IMAGE_ANALYSIS_PROMPT = (
+    "You are an inventory assistant analyzing an image. Identify all distinct items"
+    " visible in the image that someone would want to track in a home inventory"
+    " (groceries, household items, tools, etc).\n\n"
+    "For each item, provide:\n"
+    "- name: a concise, common name\n"
+    "- quantity: estimated count (default 1 if unclear)\n"
+    "- category: a simple category (e.g., meat, produce, dairy, electronics, cleaning, tools)\n\n"
+    "Respond ONLY with a JSON array. Example:\n"
+    '[{"name": "chicken breast", "quantity": 2, "category": "meat"},'
+    ' {"name": "broccoli", "quantity": 1, "category": "produce"}]\n\n'
+    "If the image shows a receipt, extract the purchased items from the receipt text.\n"
+    "If no identifiable inventory items are visible, respond with an empty array: []"
+)
+
+
+def analyze_image(image_data: bytes, media_type: str, user_hint: str | None = None) -> list[dict]:
+    """Analyze an image using the vision model and return identified items.
+
+    Args:
+        image_data: Raw image bytes
+        media_type: MIME type (e.g., 'image/jpeg')
+        user_hint: Optional user message providing context
+
+    Returns:
+        List of dicts with name, quantity, category for each identified item
+    """
+    client = get_client()
+    deployment = os.getenv("AZURE_OPENAI_VISION_DEPLOYMENT", "gpt-4o")
+
+    b64 = base64.b64encode(image_data).decode("utf-8")
+    data_url = f"data:{media_type};base64,{b64}"
+
+    user_content: list[dict[str, Any]] = [
+        {"type": "image_url", "image_url": {"url": data_url, "detail": "auto"}},
+    ]
+    if user_hint:
+        user_content.insert(0, {"type": "text", "text": user_hint})
+
+    response = client.chat.completions.create(
+        model=deployment,
+        messages=[
+            {"role": "system", "content": IMAGE_ANALYSIS_PROMPT},
+            {"role": "user", "content": user_content},
+        ],
+        max_tokens=1024,
+        temperature=0.2,
+    )
+
+    raw = response.choices[0].message.content or "[]"
+    # Strip markdown code fences if present
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[-1]
+        raw = raw.rsplit("```", 1)[0]
+        raw = raw.strip()
+
+    try:
+        items = json.loads(raw)
+        if not isinstance(items, list):
+            logger.warning(f"Vision model returned non-list: {raw[:200]}")
+            return []
+        return items
+    except json.JSONDecodeError:
+        logger.warning(f"Vision model returned non-JSON: {raw[:200]}")
+        return []

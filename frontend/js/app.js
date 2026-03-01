@@ -4,7 +4,7 @@ import {
     showAuthTab, handleAuth, logout, showForgotPassword, showLoginFromForgot,
     handleForgotPassword, handleResetPassword, checkAuth
 } from './auth.js';
-import { sendMessage, handleChatSubmit } from './chat.js';
+import { sendMessage, handleChatSubmit, handleImageSelect, clearImagePreview } from './chat.js';
 import {
     loadInventory, loadLocations, debounceSearch, showAddItemModal,
     hideAddItemModal, handleAddItem, deleteItem, prevPage, nextPage
@@ -71,6 +71,8 @@ window.handleForgotPassword = handleForgotPassword;
 window.handleResetPassword = handleResetPassword;
 window.sendMessage = sendMessage;
 window.handleChatSubmit = handleChatSubmit;
+window.handleImageSelect = handleImageSelect;
+window.clearImagePreview = clearImagePreview;
 window.loadInventory = loadInventory;
 window.debounceSearch = debounceSearch;
 window.showAddItemModal = showAddItemModal;
