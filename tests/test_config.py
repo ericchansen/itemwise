@@ -89,7 +89,7 @@ class TestSettings:
             postgres_db="db",
         )
 
-        # URL should still be constructed correctly
+        # Special characters should be URL-encoded in the URL
         assert "user" in settings.database_url
-        assert "p@ss:word!" in settings.database_url
+        assert "p%40ss%3Aword%21" in settings.database_url
         assert "db" in settings.database_url

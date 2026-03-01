@@ -323,7 +323,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'DATABASE_URL'
-              value: 'postgresql+asyncpg://inventoryadmin:${postgresPassword}@${postgresServer.properties.fullyQualifiedDomainName}:5432/inventory?ssl=require'
+              value: 'postgresql+asyncpg://inventoryadmin:${uriComponent(postgresPassword)}@${postgresServer.properties.fullyQualifiedDomainName}:5432/inventory?ssl=require'
             }
             {
               name: 'AZURE_OPENAI_ENDPOINT'
