@@ -77,6 +77,34 @@ Azure PostgreSQL Flexible Server (Burstable B1ms) auto-stops after ~7 days of in
 
 ---
 
+## 2026-03-02: GitHub Environments for Deployment Tracking
+
+**Author:** Simon (DevOps)  
+**Date:** 2026-02-28  
+**Status:** Implemented
+
+### Context
+Deployments were not visible in the GitHub repository sidebar because workflow jobs lacked the `environment:` key.
+
+### Decision
+1. Added `environment: production` (with `url`) to the `deploy` job in `.github/workflows/cd.yml`
+2. Added `environment: staging` (with dynamic `url` from staging step output) to the `deploy-and-test` job in `.github/workflows/pr-staging.yml`
+3. Created both environments in GitHub via `gh api --method PUT`
+4. Added deployment summary step to `cd.yml` that writes to `$GITHUB_STEP_SUMMARY`
+
+### Rationale
+- GitHub Environments enable deployment tracking in the repo sidebar
+- The `url` property makes each deployment clickable, linking directly to the deployed app
+- Deployment summary step provides at-a-glance info in Actions run page
+- No structural workflow changes — minimal additions only
+
+### Impact
+- All future CD runs register as production deployments
+- All future PR staging deploys register as staging deployments
+- Deployment history visible at: https://github.com/ericchansen/itemwise/deployments
+
+---
+
 ## 2025-07: SPEC.md Requires Major Update
 
 **Author:** Mal (Lead)  

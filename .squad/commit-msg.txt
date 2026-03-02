@@ -1,0 +1,8 @@
+chore(.squad): orchestration logs for 2026-03-02 prod verification & PR #25
+
+- Zoe: Prod manual testing post-rollback — 8 steps passed
+- Simon: PR #25 created with auth flash fix
+- Merge decision inbox (GitHub Environments) → decisions.md
+- Delete processed inbox file
+
+Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>
