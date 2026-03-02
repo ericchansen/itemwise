@@ -397,3 +397,187 @@ class TestChatImageAddEndpoint:
         assert "999× canned soup" in data["response"]
         # Quantity -3 should be clamped to 1
         assert "1× rice" in data["response"]
+
+
+class TestImageLifecycle:
+    """Tests for the full image analysis → add items lifecycle.
+
+    These tests exercise the contract between the /chat/image and
+    /chat/image/add endpoints to ensure items identified in the
+    analysis step can actually be added in the next step.
+    The frontend bug (clearImagePreview wiping _identifiedItems before
+    the user could click "Add items") was invisible because we never
+    tested the two endpoints as a connected flow.
+    """
+
+    @pytest.mark.asyncio
+    async def test_analyze_then_add_items_lifecycle(
+        self, client: AsyncClient, known_user: User, db_session: AsyncSession
+    ) -> None:
+        """Full lifecycle: upload image → get items → add items → verify."""
+        headers = auth_header(known_user.id, known_user.email)
+        mock_items = [
+            {"name": "frozen pizza", "quantity": 2, "category": "frozen"},
+            {"name": "ice cream", "quantity": 1, "category": "frozen"},
+        ]
+
+        # Step 1: Analyze image
+        with patch("itemwise.api.AZURE_OPENAI_ENABLED", True), \
+             patch("itemwise.ai_client.analyze_image", return_value=mock_items):
+            analyze_resp = await client.post(
+                "/api/v1/chat/image",
+                files={"image": ("photo.png", VALID_PNG, "image/png")},
+                headers=headers,
+            )
+
+        assert analyze_resp.status_code == 200
+        analyze_data = analyze_resp.json()
+        assert analyze_data["action"] == "items_identified"
+        returned_items = analyze_data["items"]
+        assert len(returned_items) == 2
+
+        # Step 2: Add the EXACT items returned by analysis (mimics frontend)
+        with patch("itemwise.api.generate_embedding", return_value=[0.0] * 1536):
+            add_resp = await client.post(
+                "/api/v1/chat/image/add",
+                json={"items": returned_items, "location": "Chest Freezer"},
+                headers=headers,
+            )
+
+        assert add_resp.status_code == 200
+        add_data = add_resp.json()
+        assert add_data["action"] == "ai_response"
+        assert "2 item(s)" in add_data["response"]
+        assert "frozen pizza" in add_data["response"]
+        assert "ice cream" in add_data["response"]
+        assert "Chest Freezer" in add_data["response"]
+
+    @pytest.mark.asyncio
+    async def test_add_items_with_empty_list(
+        self, client: AsyncClient, known_user: User, db_session: AsyncSession
+    ) -> None:
+        """Adding an empty items list should succeed with 0 items added.
+
+        This mirrors what happens when the frontend's _identifiedItems
+        is wiped before the user clicks 'Add items'.
+        """
+        headers = auth_header(known_user.id, known_user.email)
+        resp = await client.post(
+            "/api/v1/chat/image/add",
+            json={"items": [], "location": "Pantry"},
+            headers=headers,
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "0 item(s)" in data["response"]
+
+    @pytest.mark.asyncio
+    async def test_add_items_empty_location_rejected(
+        self, client: AsyncClient, known_user: User
+    ) -> None:
+        """Empty string location should be rejected or handled gracefully."""
+        headers = auth_header(known_user.id, known_user.email)
+        items = [{"name": "milk", "quantity": 1, "category": "dairy"}]
+        with patch("itemwise.api.generate_embedding", return_value=[0.0] * 1536):
+            resp = await client.post(
+                "/api/v1/chat/image/add",
+                json={"items": items, "location": ""},
+                headers=headers,
+            )
+
+        # Empty location should still be processed (server creates location)
+        # or return an error — either way, it should not crash
+        assert resp.status_code in (200, 400, 422)
+
+    @pytest.mark.asyncio
+    async def test_add_items_verifiable_via_items_endpoint(
+        self, client: AsyncClient, known_user: User, db_session: AsyncSession
+    ) -> None:
+        """After adding items via image add, they should appear in the items list."""
+        headers = auth_header(known_user.id, known_user.email)
+        items = [
+            {"name": "organic eggs", "quantity": 2, "category": "dairy"},
+        ]
+
+        with patch("itemwise.api.generate_embedding", return_value=[0.0] * 1536):
+            add_resp = await client.post(
+                "/api/v1/chat/image/add",
+                json={"items": items, "location": "Fridge"},
+                headers=headers,
+            )
+
+        assert add_resp.status_code == 200
+        assert "organic eggs" in add_resp.json()["response"]
+
+        # Verify items actually exist via GET /items
+        list_resp = await client.get("/api/v1/items", headers=headers)
+        assert list_resp.status_code == 200
+        item_names = [i["name"] for i in list_resp.json()["items"]]
+        assert "organic eggs" in item_names
+
+    @pytest.mark.asyncio
+    async def test_lifecycle_items_format_compatibility(
+        self, client: AsyncClient, known_user: User, db_session: AsyncSession
+    ) -> None:
+        """Items returned by /chat/image must be accepted by /chat/image/add.
+
+        Regression: if the analysis response format ever drifts from
+        what the add endpoint expects, this test will catch it.
+        """
+        headers = auth_header(known_user.id, known_user.email)
+        # Items with extra fields the vision API might return
+        mock_items = [
+            {"name": "cheddar cheese", "quantity": 1, "category": "dairy",
+             "description": "Sharp cheddar block"},
+        ]
+
+        with patch("itemwise.api.AZURE_OPENAI_ENABLED", True), \
+             patch("itemwise.ai_client.analyze_image", return_value=mock_items):
+            analyze_resp = await client.post(
+                "/api/v1/chat/image",
+                files={"image": ("photo.jpg", VALID_JPEG, "image/jpeg")},
+                headers=headers,
+            )
+
+        returned_items = analyze_resp.json()["items"]
+
+        # Pass returned items directly — no transformation
+        with patch("itemwise.api.generate_embedding", return_value=[0.0] * 1536):
+            add_resp = await client.post(
+                "/api/v1/chat/image/add",
+                json={"items": returned_items, "location": "Fridge"},
+                headers=headers,
+            )
+
+        assert add_resp.status_code == 200
+        assert "cheddar cheese" in add_resp.json()["response"]
+
+    @pytest.mark.asyncio
+    async def test_add_items_single_item_from_analysis(
+        self, client: AsyncClient, known_user: User, db_session: AsyncSession
+    ) -> None:
+        """Even a single-item analysis result should add successfully."""
+        headers = auth_header(known_user.id, known_user.email)
+        mock_items = [{"name": "whole milk", "quantity": 1, "category": "dairy"}]
+
+        with patch("itemwise.api.AZURE_OPENAI_ENABLED", True), \
+             patch("itemwise.ai_client.analyze_image", return_value=mock_items):
+            analyze_resp = await client.post(
+                "/api/v1/chat/image",
+                files={"image": ("photo.png", VALID_PNG, "image/png")},
+                headers=headers,
+            )
+
+        assert analyze_resp.json()["action"] == "items_identified"
+
+        with patch("itemwise.api.generate_embedding", return_value=[0.0] * 1536):
+            add_resp = await client.post(
+                "/api/v1/chat/image/add",
+                json={"items": analyze_resp.json()["items"], "location": "Fridge"},
+                headers=headers,
+            )
+
+        assert add_resp.status_code == 200
+        assert "1 item(s)" in add_resp.json()["response"]
+        assert "whole milk" in add_resp.json()["response"]

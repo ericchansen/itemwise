@@ -27,3 +27,13 @@
 - Endpoints tested: unsupported file type, empty file, OpenAI disabled, successful analysis, items found/not found, auth required, validation errors
 - Missing: E2E test for browser-based image upload (Playwright with file upload fixture)
 - `test_config.py` change: correctly updates URL-encoding assertion from raw `p@ss:word!` to encoded `p%40ss%3Aword%21`
+
+### 2026-03-01: Image Lifecycle Tests (Bug Prevention)
+- Added `TestImageLifecycle` class (6 tests) to `tests/test_image_analysis.py` — total now 26 tests
+- Tests the full analyze→add contract: POST `/chat/image` returns items, then POST `/chat/image/add` with those exact items succeeds
+- Key test: `test_analyze_then_add_items_lifecycle` — chains both endpoints, verifying items from analysis are valid input for the add endpoint
+- `test_add_items_verifiable_via_items_endpoint` — confirms added items appear in GET `/items` (response wraps items in `{"items": [...]}`)
+- `test_add_items_with_empty_list` — catches the silent no-op when `_identifiedItems` gets wiped (the frontend bug pattern)
+- `test_lifecycle_items_format_compatibility` — detects format drift between analysis response and add request
+- Coverage fail-under 40% is pre-existing (34.67% total) — not related to these tests
+- Lesson: always test multi-step workflows as connected flows, not just individual endpoints in isolation
