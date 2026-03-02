@@ -20,7 +20,7 @@
 - Tested production URL after master rollback removed image analysis feature
 - **All 7 test steps PASSED:**
   1. Login page loads cleanly — no flash of content, Login/Register tabs, email/password fields
-  2. Registration works — created `prodtest@test.com` account, auto-logged in
+  2. Registration works — created `[email scrubbed]` account, auto-logged in
   3. Chat interface works — sent "What's in my inventory?", got correct "Your inventory is empty." response
   4. Items tab loads — search bar, location dropdown, Add button, "No items yet" placeholder
   5. Settings tab loads — Profile (email), Change Password, Inventory Members, Notifications sections
