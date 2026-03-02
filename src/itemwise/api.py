@@ -1722,7 +1722,7 @@ async def chat_image(
 
     try:
         from .ai_client import analyze_image
-        items = analyze_image(image_data, content_type, user_hint=message)
+        items = await asyncio.to_thread(analyze_image, image_data, content_type, user_hint=message)
     except Exception:
         logger.exception("Image analysis error")
         return ImageAnalysisResponse(
