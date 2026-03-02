@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'itemwise-v1';
+const CACHE_VERSION = 'itemwise-v2';
 const STATIC_ASSETS = [
   '/',
   '/manifest.json',
@@ -24,34 +24,38 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
-// Fetch: network-first for API, cache-first for static
+// Fetch: network-first for API and JS, cache-first for truly static assets
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
   // Skip non-GET requests
   if (event.request.method !== 'GET') return;
 
-  // Network-first for API calls (never serve stale auth-gated data)
-  if (url.pathname.startsWith('/api/')) {
+  // Network-first for API calls and JS files (never serve stale code)
+  if (url.pathname.startsWith('/api/') || url.pathname.endsWith('.js')) {
     event.respondWith(
-      fetch(event.request).catch(() => caches.match(event.request))
+      fetch(event.request).then((response) => {
+        if (response.ok && url.origin === self.location.origin) {
+          const clone = response.clone();
+          caches.open(CACHE_VERSION).then((cache) => cache.put(event.request, clone));
+        }
+        return response;
+      }).catch(() => caches.match(event.request))
     );
     return;
   }
 
-  // Cache-first for static assets
+  // Cache-first for truly static assets (icons, manifest, HTML shell)
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
       return fetch(event.request).then((response) => {
-        // Cache successful responses for same-origin requests
         if (response.ok && url.origin === self.location.origin) {
           const clone = response.clone();
           caches.open(CACHE_VERSION).then((cache) => cache.put(event.request, clone));
         }
         return response;
       }).catch(() => {
-        // Offline fallback for navigation requests
         if (event.request.mode === 'navigate') {
           return caches.match('/');
         }
