@@ -8,6 +8,22 @@ let _pendingImage = null;
 // Track identified items from last image analysis
 let _identifiedItems = null;
 
+// Defensively re-enable chat input controls after a send completes
+function resetChatInput() {
+    const sendBtn = document.getElementById('chat-send-btn');
+    const chatInput = document.getElementById('chat-input');
+    sendBtn.disabled = false;
+    sendBtn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M12 5l7 7-7 7"/></svg>';
+    chatInput.disabled = false;
+    chatInput.focus();
+    // Safety net: guarantee re-enable on next tick in case a concurrent
+    // DOM update (e.g. clearImagePreview) interferes with this frame
+    setTimeout(() => {
+        sendBtn.disabled = false;
+        chatInput.disabled = false;
+    }, 0);
+}
+
 export function addMessage(content, isUser = false) {
     const container = document.getElementById('chat-messages');
     const div = document.createElement('div');
@@ -81,10 +97,7 @@ export async function sendMessage(text) {
     } catch (e) {
         showConnectionError(e);
     } finally {
-        sendBtn.disabled = false;
-        sendBtn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M12 5l7 7-7 7"/></svg>';
-        chatInput.disabled = false;
-        chatInput.focus();
+        resetChatInput();
     }
 }
 
@@ -175,10 +188,7 @@ async function sendImageMessage() {
         showConnectionError(e);
     } finally {
         clearImagePreview();
-        sendBtn.disabled = false;
-        sendBtn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M5 12h14M12 5l7 7-7 7"/></svg>';
-        chatInput.disabled = false;
-        chatInput.focus();
+        resetChatInput();
     }
 }
 
