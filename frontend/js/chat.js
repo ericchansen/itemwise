@@ -122,7 +122,6 @@ export function handleImageSelect(e) {
 
 export function clearImagePreview() {
     _pendingImage = null;
-    _identifiedItems = null;
     document.getElementById('image-preview-container').classList.add('hidden');
     document.getElementById('image-preview').src = '';
     document.getElementById('image-input').value = '';
