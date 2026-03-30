@@ -32,17 +32,17 @@ uv sync
 ### 2. Start services
 
 ```bash
-docker compose up -d          # PostgreSQL (5433) + app (8080)
+docker compose up -d          # PostgreSQL (5432) + app (8080)
 docker compose ps             # Verify both are healthy
 ```
 
-### 3. Run migrations
+The app container handles migrations automatically via `start.sh`, so once healthy
+you can open [http://localhost:8080](http://localhost:8080).
 
-```bash
-uv run alembic upgrade head
-```
+> **Developing outside Docker?** Start only the database with `docker compose up -d postgres`,
+> then run `uv run alembic upgrade head` and `uv run itemwise-web`. See CONTRIBUTING.md for details.
 
-### 4. Configure Azure OpenAI
+### 3. Configure Azure OpenAI
 
 Add your Azure OpenAI credentials to `.env`:
 
@@ -54,12 +54,6 @@ AZURE_OPENAI_VISION_DEPLOYMENT=gpt-4o
 ```
 
 The app authenticates via `DefaultAzureCredential` — run `az login` first.
-
-### 5. Launch
-
-```bash
-uv run itemwise-web     # http://localhost:8080
-```
 
 ## Web Interface
 
@@ -191,7 +185,7 @@ itemwise/
 ├── alembic/                # Database migrations
 ├── infra/                  # Azure Bicep templates
 ├── scripts/                # Maintenance scripts
-├── docker-compose.yml      # Local dev: app (8080) + PostgreSQL (5433)
+├── docker-compose.yml      # Local dev: app (8080) + PostgreSQL (5432)
 ├── Dockerfile              # Multi-stage build
 ├── azure.yaml              # Azure Developer CLI config
 └── start.sh                # Container entrypoint
