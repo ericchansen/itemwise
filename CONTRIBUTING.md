@@ -152,7 +152,7 @@ itemwise/
 ├── CONTRIBUTING.md            # This file
 ├── pyproject.toml             # Dependencies, ruff config, scripts
 ├── pytest.ini                 # Test configuration
-├── docker-compose.yml         # Local dev: app (8080) + PostgreSQL (5433)
+├── docker-compose.yml         # Local dev: app (8080) + PostgreSQL (5432)
 ├── Dockerfile                 # Multi-stage build (uv, Python 3.12-slim)
 ├── azure.yaml                 # Azure Developer CLI config
 ├── start.sh                   # Container entrypoint (migrations + uvicorn)
@@ -348,7 +348,7 @@ docker compose up -d             # Start PostgreSQL (port 5433) + app (port 8080
 
 ### Running outside Docker
 ```bash
-docker compose up -d itemwise-db    # Just the database
+docker compose up -d postgres       # Just the database
 uv run alembic upgrade head         # Apply migrations
 uv run itemwise-web                 # Start dev server on port 8080
 # Or: uv run uvicorn itemwise.api:app --reload --port 8080
