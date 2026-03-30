@@ -1,111 +1,99 @@
 # Itemwise
 
-AI-powered inventory management with natural language search. Track items across multiple locations (freezer, garage, pantry, battery bin - anywhere!) using conversational interfaces.
-
-Built with FastMCP to enable AI agents like Claude to manage your inventory, plus a web UI for easy demos. **Now with Azure OpenAI integration for intelligent natural language understanding!**
+AI-powered inventory management with natural language chat, semantic search, and image analysis. Track items across multiple locations — freezer, garage, pantry, anywhere — using conversational interfaces, a progressive web app, or AI agents via MCP.
 
 ## Features
 
-- 🏠 **Multi-Location Support** - Track items in any location: freezer, garage, closet, tool shed, etc.
-- 🤖 **MCP Server Integration** - Expose inventory operations to AI agents via Model Context Protocol
-- 🧠 **Azure OpenAI Powered** - Natural language chat that understands "I put 3 bags of chicken in the freezer"
-- 🔍 **Semantic Search** - Natural language search powered by Azure OpenAI embeddings and pgvector
-- 🌐 **Web Interface** - Responsive chat UI that works on desktop and mobile
-- 📝 **Complete Audit Trail** - All operations logged for tracking
-- 🗄️ **PostgreSQL Backend** - Robust database with vector extension for semantic capabilities
-- ⚡ **Async Operations** - Built with SQLAlchemy async for high performance
+- 🧠 **AI Chat** — Natural language understanding powered by Azure OpenAI GPT-4o-mini with tool calling
+- 📷 **Image Analysis** — Photograph items and the AI identifies them (GPT-4o vision)
+- 🔍 **Semantic Search** — Hybrid text + vector search via pgvector and text-embedding-3-small (1536-dim)
+- 📅 **Expiration Tracking** — Track expiry dates and receive email digest notifications
+- 🗑️ **Soft Delete / Restore** — Trash, restore, and purge items
+- 🏠 **Multi-Inventory Sharing** — Share inventories with other users via email invitations
+- 📦 **Lot Tracking** — FIFO ordering with per-lot quantities and expiration dates
+- 🔐 **JWT Authentication** — Registration, login, logout, password change, and password reset via email
+- ✅ **Confirmation Flow** — AI asks for confirmation before destructive actions
+- 📱 **PWA** — Installable web app with service worker and offline support
+- 🤖 **MCP Server** — Expose inventory tools to Claude Desktop and other AI agents
+- 🛡️ **Rate Limiting & CSRF Protection** — Secured sensitive endpoints
+- ☁️ **Azure Container Apps** — One-command deployment with `azd` and Bicep IaC
 
 ## Quick Start
 
-### 1. Clone and Setup
+### 1. Clone and configure
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/ericchansen/itemwise.git
 cd itemwise
-
-# Copy environment template
-cp .env.example .env
-
-# Install dependencies
+cp .env.example .env   # Edit with your values
 uv sync
 ```
 
-### 2. Start Database
+### 2. Start services
 
 ```bash
-# Start PostgreSQL with pgvector extension
-docker compose up -d
-
-# Wait for database to be ready
-docker compose ps
+docker compose up -d          # PostgreSQL (5433) + app (8080)
+docker compose ps             # Verify both are healthy
 ```
 
-### 3. Initialize Database
+### 3. Run migrations
 
 ```bash
-# Run migrations to create tables
 uv run alembic upgrade head
 ```
 
-### 4. Configure Azure OpenAI (Optional but Recommended)
+### 4. Configure Azure OpenAI
 
-For full natural language understanding (adding/removing items via chat), configure Azure OpenAI:
+Add your Azure OpenAI credentials to `.env`:
 
 ```env
-# Add to your .env file
 AZURE_OPENAI_ENDPOINT=https://your-resource.cognitiveservices.azure.com/
-AZURE_OPENAI_DEPLOYMENT=gpt-4o-mini  # or your deployed model name
+AZURE_OPENAI_DEPLOYMENT=gpt-4o-mini
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
+AZURE_OPENAI_VISION_DEPLOYMENT=gpt-4o
 ```
 
-The app uses Azure AD authentication via `DefaultAzureCredential`, so make sure you're logged in:
+The app authenticates via `DefaultAzureCredential` — run `az login` first.
+
+### 5. Launch
+
 ```bash
-az login
-```
-
-Without Azure OpenAI, the chat will work in fallback mode with basic pattern matching.
-
-### 5. Run the Application
-
-**Option A: Web Interface (Recommended for demos)**
-```bash
-# Start the web server
-uv run itemwise-web
-
-# Open http://localhost:8080 in your browser
-```
-
-**Option B: MCP Server (For AI agents like Claude)**
-```bash
-# Start the MCP server
-uv run itemwise-server
+uv run itemwise-web     # http://localhost:8080
 ```
 
 ## Web Interface
 
-The web UI provides:
-- **Chat tab**: Natural language interaction with your inventory
-- **Inventory tab**: Browse, search, and manage items with filters
+The frontend is a modular PWA built with Tailwind CSS and vanilla JavaScript:
 
-With Azure OpenAI enabled, try:
-- "I just bought 5 bags of frozen vegetables and put them in the freezer"
-- "I used 2 of the AA batteries from the garage"
-- "What meat do I have in the freezer?"
-- "Do I have any batteries?"
-- "Show me everything in the garage"
+```
+frontend/
+├── index.html          # HTML shell + Tailwind CSS
+├── js/
+│   ├── app.js          # App initialization
+│   ├── auth.js         # Authentication flows
+│   ├── chat.js         # Chat tab
+│   ├── items.js        # Items tab
+│   ├── settings.js     # Settings tab
+│   ├── state.js        # State management
+│   └── utils.js        # Shared utilities
+├── manifest.json       # PWA manifest
+├── sw.js               # Service worker
+└── icons/              # PWA icons
+```
 
-The AI understands context and will automatically:
-- Add items with appropriate categories when you mention buying/storing things
-- Remove or reduce quantities when you mention using items
-- Search and list items when you ask about what you have
+**Chat examples:**
+- *"I just bought 5 bags of frozen vegetables and put them in the chest freezer"*
+- *"I used 2 AA batteries from the garage"*
+- *"What meat do I have that expires this month?"*
+
+**Image analysis:** Photograph a shelf or group of items — the AI identifies them and offers to add them to your inventory.
 
 ## MCP Client Configuration
 
-### Claude Desktop
+Add to your Claude Desktop config:
 
-Add to your Claude Desktop configuration:
-
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+**macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
@@ -119,70 +107,39 @@ Add to your Claude Desktop configuration:
 }
 ```
 
-## Available MCP Tools
+## MCP Tools
 
-### `add_item`
-Add a new item to any location.
-
-```
-"Add 3 chicken breasts to the freezer"
-"Put 8 AAA batteries in the battery bin"
-"Store a hammer in the garage"
-```
-
-### `list_inventory`
-List items filtered by category or location.
-
-```
-"What's in the freezer?"
-"Show me all the meat"
-"What electronics do I have?"
-```
-
-### `search_inventory`
-Natural language search across all items.
-
-```
-"Do I have any chicken?"
-"Find batteries"
-"Something to grill"
-```
-
-### `add_location`
-Create a new storage location.
-
-```
-"Create a location called Tool Shed"
-```
-
-### `get_locations`
-List all available storage locations.
-
-### `update_item_tool`
-Update an existing item's details.
-
-### `remove_item`
-Remove an item from inventory.
+| Tool | Description |
+|------|-------------|
+| `add_item` | Add an item to a location with quantity, category, and expiration |
+| `update_item_tool` | Update an existing item's details |
+| `remove_item` | Remove an item from inventory |
+| `list_inventory` | List items, optionally filtered by category or location |
+| `search_inventory` | Semantic search across all items |
+| `add_location` | Create a new storage location |
+| `get_locations` | List all storage locations |
+| `get_oldest_items_tool` | Get items with the oldest lots (FIFO) |
 
 ## REST API
 
-The web server also exposes a REST API:
+The API serves 30+ endpoints across authentication, items, chat, search, locations, inventories, and notifications. Both `/api/` and `/api/v1/` route prefixes are supported.
 
-- `GET /api/items` - List items (with optional `category` and `location` filters)
-- `POST /api/items` - Add a new item
-- `GET /api/items/{id}` - Get single item
-- `PUT /api/items/{id}` - Update item
-- `DELETE /api/items/{id}` - Delete item
-- `GET /api/search?q=query` - Search items
-- `GET /api/locations` - List locations
-- `POST /api/locations` - Create location
-- `POST /api/chat` - AI-powered chat endpoint (requires Azure OpenAI for full functionality)
+| Group | Endpoints | Highlights |
+|-------|-----------|------------|
+| **Auth** | 9 | Register, login (form-encoded), JWT refresh, password reset via email, account deletion |
+| **Items** | 9 | CRUD, soft-delete/restore/purge, expiration tracking |
+| **Chat** | 4 | Natural language, confirmation flow, image analysis, image-to-item |
+| **Search** | 1 | Hybrid semantic + text search |
+| **Locations** | 2 | List and create |
+| **Inventories** | 4 | List, members, invite, remove member |
+| **Notifications** | 1 | Expiration digest email |
+| **Health** | 1 | `GET /health` |
 
-API docs available at `http://localhost:8080/docs`
+Interactive API docs: [http://localhost:8080/docs](http://localhost:8080/docs)
 
 ## Configuration
 
-Edit `.env` file:
+Copy `.env.example` and edit:
 
 ```env
 # Database
@@ -194,83 +151,102 @@ POSTGRES_PORT=5432
 
 # Application
 DEBUG=false
-ENV=production  # or 'development'
+ENV=production
+SECRET_KEY=<generate-with-python-secrets>
 
-# Security - REQUIRED for production
-# Generate a secure key:
-#   python -c "import secrets; print(secrets.token_urlsafe(32))"
-SECRET_KEY=your-secure-random-key-here
-
-# Azure OpenAI (optional - enables intelligent chat + semantic search)
+# Azure OpenAI
 AZURE_OPENAI_ENDPOINT=https://your-resource.cognitiveservices.azure.com/
 AZURE_OPENAI_DEPLOYMENT=gpt-4o-mini
 AZURE_OPENAI_EMBEDDING_DEPLOYMENT=text-embedding-3-small
+AZURE_OPENAI_VISION_DEPLOYMENT=gpt-4o
+
+# Email (password reset + notifications)
+AZURE_COMMUNICATION_CONNECTION_STRING=endpoint=https://...
+AZURE_COMMUNICATION_SENDER=DoNotReply@...
 ```
 
-### Security Note
+> **Security:** `SECRET_KEY` (or `JWT_SECRET_KEY`) is required when `DEBUG=false` or `ENV=production`. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
 
-The `SECRET_KEY` (or `JWT_SECRET_KEY`) environment variable is **required** when:
-- `DEBUG=false` (default), or
-- `ENV=production` or `ENV=prod`
-
-The application will raise an error on startup if SECRET_KEY is not set in production environments. Generate a secure key with:
-
-```bash
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
-## Development
-
-### Project Structure
+## Project Structure
 
 ```
 itemwise/
 ├── src/itemwise/
-│   ├── server.py        # MCP server and tools
-│   ├── api.py           # FastAPI REST API
-│   ├── ai_client.py     # Azure OpenAI integration
-│   ├── auth.py          # Authentication & security
-│   ├── embeddings.py    # Semantic search embeddings
-│   ├── config.py        # Settings
+│   ├── api.py              # FastAPI REST API + frontend serving
+│   ├── ai_client.py        # Azure OpenAI integration + tool calling
+│   ├── auth.py             # JWT authentication + password hashing
+│   ├── config.py           # Pydantic Settings configuration
+│   ├── email_service.py    # Azure Communication Services email
+│   ├── embeddings.py       # Semantic search embeddings (pgvector)
+│   ├── server.py           # MCP server for AI agents
+│   ├── utils.py            # Shared utilities
+│   ├── prompts/
+│   │   └── system.txt      # AI system prompt
 │   └── database/
-│       ├── models.py    # SQLAlchemy models
-│       ├── crud.py      # Database operations
-│       └── engine.py    # Connection management
-├── frontend/
-│   └── index.html       # Web UI
-├── alembic/             # Database migrations
-├── tests/               # Test suite
-└── docker-compose.yml   # PostgreSQL setup
+│       ├── models.py       # SQLAlchemy models (7 tables)
+│       ├── crud.py         # Database operations
+│       └── engine.py       # Async engine + session management
+├── frontend/               # Modular web UI (HTML + JS modules + PWA)
+├── tests/                  # 26 test modules, ~322 tests
+├── alembic/                # Database migrations
+├── infra/                  # Azure Bicep templates
+├── scripts/                # Maintenance scripts
+├── docker-compose.yml      # Local dev: app (8080) + PostgreSQL (5433)
+├── Dockerfile              # Multi-stage build
+├── azure.yaml              # Azure Developer CLI config
+└── start.sh                # Container entrypoint
 ```
+
+## Development
+
+### Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Language | Python 3.11+ (Docker uses 3.12) |
+| Framework | FastAPI (async) |
+| ORM | SQLAlchemy 2.0 (async) + asyncpg |
+| Database | PostgreSQL 16 + pgvector |
+| AI | Azure OpenAI (GPT-4o-mini, GPT-4o vision, text-embedding-3-small) |
+| Auth | PyJWT + bcrypt |
+| Email | Azure Communication Services |
+| MCP | FastMCP (stdio transport) |
+| Frontend | Tailwind CSS (CDN), vanilla JS (modular), PWA |
+| Deployment | Azure Container Apps via `azd` (Bicep IaC) |
+| Package Manager | uv |
 
 ### Database Migrations
 
 ```bash
-# Create new migration
 uv run alembic revision --autogenerate -m "Description"
-
-# Apply migrations
 uv run alembic upgrade head
 ```
 
 ### Testing
 
 ```bash
-uv run pytest
+# Full test suite
+docker compose up -d
+uv run python -m pytest tests/ -v --tb=short
+
+# E2E tests
+uv run python -m pytest tests/test_e2e.py -v -m e2e --no-cov
+```
+
+### Deploy to Azure
+
+```bash
+azd deploy
 ```
 
 ## Troubleshooting
 
-### Database connection errors
-```bash
-docker compose ps
-docker compose logs postgres
-```
-
-### Module import errors
-```bash
-uv sync --reinstall
-```
+| Problem | Fix |
+|---------|-----|
+| Database connection errors | `docker compose ps` / `docker compose logs postgres` |
+| Module import errors | `uv sync --reinstall` |
+| Azure OpenAI 401 | Run `az login` to refresh `DefaultAzureCredential` |
+| Migrations fail on Azure | Check `alembic/env.py` SSL translation (`ssl=require` ↔ `sslmode=require`) |
 
 ## License
 

@@ -81,7 +81,7 @@ Open the app in the browser (both local and Azure URLs) and interact with it:
 
 ## Key Technical Notes
 
-- `prek` (prek.j178.dev) is a Rust-based pre-commit tool. It is NOT beads. Do NOT remove it.
+- `prek` (prek.j178.dev) is a Rust-based pre-commit tool. It is intentional — do NOT remove it.
 - Login endpoint uses `application/x-www-form-urlencoded` (OAuth2PasswordRequestForm), not JSON.
 - `conftest.py` has autouse `mock_embeddings` fixture — test files testing real embeddings must override it.
 - Shell scripts MUST have LF line endings (enforced by `.gitattributes`).
