@@ -19,7 +19,7 @@ before making any changes.
 9. [Testing](#testing)
 10. [Deployment](#deployment)
 11. [Conventions & Gotchas](#conventions--gotchas)
-12. [Current Roadmap](#current-roadmap)
+12. [Completed Roadmap](#completed-roadmap)
 
 ---
 
@@ -77,14 +77,14 @@ editing items.
 
 | Layer | Technology |
 |-------|-----------|
-| Language | Python 3.12 |
+| Language | Python 3.11+ (Docker image uses 3.12) |
 | Web framework | FastAPI (async) |
 | ORM | SQLAlchemy 2.0 (async) |
 | Database | PostgreSQL 16 + pgvector |
-| AI | Azure OpenAI (GPT-4o-mini, text-embedding-3-small) |
-| Auth | JWT (python-jose) + bcrypt |
+| AI | Azure OpenAI (GPT-4o-mini chat, GPT-4o vision, text-embedding-3-small embeddings) |
+| Auth | JWT (PyJWT) + bcrypt |
 | Email | Azure Communication Services |
-| Frontend | Single HTML file, Tailwind CSS (CDN) |
+| Frontend | Modular JS (7 modules), Tailwind CSS (CDN), PWA (service worker + manifest) |
 | Package manager | uv |
 | Linter | ruff |
 | Tests | pytest + pytest-asyncio + Playwright (E2E) |
@@ -99,22 +99,34 @@ editing items.
 itemwise/
 ├── src/itemwise/              # Application source code
 │   ├── __init__.py
-│   ├── api.py                 # FastAPI app — all REST endpoints
+│   ├── api.py                 # FastAPI app — all REST endpoints + frontend serving
 │   ├── ai_client.py           # Azure OpenAI client, tool calling, chat logic
 │   ├── auth.py                # JWT tokens, password hashing, OAuth2
 │   ├── config.py              # Pydantic Settings (env vars)
 │   ├── email_service.py       # Azure Communication Services email
 │   ├── embeddings.py          # Text embedding generation (1536-dim vectors)
 │   ├── server.py              # MCP server (for Claude Desktop integration)
+│   ├── utils.py               # Shared utilities
 │   ├── prompts/
 │   │   └── system.txt         # AI system prompt (overrides constant in ai_client.py)
 │   └── database/
 │       ├── models.py          # SQLAlchemy ORM models (7 tables)
 │       ├── engine.py          # Async engine, session factory, init
 │       └── crud.py            # All database operations
-├── frontend/
-│   └── index.html             # Entire frontend (~34KB single file)
-├── tests/                     # 16 test modules, ~190 tests
+├── frontend/                  # Modular web UI
+│   ├── index.html             # HTML shell + Tailwind CSS (CDN)
+│   ├── js/                    # JavaScript modules
+│   │   ├── app.js             # App initialization + routing
+│   │   ├── auth.js            # Authentication (login, register, JWT)
+│   │   ├── chat.js            # Chat tab functionality
+│   │   ├── items.js           # Items tab (browse, search, CRUD)
+│   │   ├── settings.js        # Settings tab (sharing, account)
+│   │   ├── state.js           # State management
+│   │   └── utils.js           # Shared utilities
+│   ├── manifest.json          # PWA web app manifest
+│   ├── sw.js                  # Service worker (offline support)
+│   └── icons/                 # PWA icons (SVG)
+├── tests/                     # 26 test modules, ~322 tests
 │   ├── conftest.py            # Fixtures: test DB, users, inventories, mock embeddings
 │   ├── test_api.py            # API endpoint tests
 │   ├── test_auth.py           # Auth utilities
@@ -123,23 +135,28 @@ itemwise/
 │   ├── test_server.py         # MCP server tools
 │   ├── test_sharing.py        # Multi-inventory membership
 │   ├── test_lots.py           # Lot tracking / FIFO
+│   ├── test_soft_delete.py    # Trash / restore / purge
+│   ├── test_image_analysis.py # Image chat endpoints
+│   ├── test_password_reset.py # Forgot / reset password flow
+│   ├── test_expiration.py     # Expiration date tracking
+│   ├── test_rate_limiting.py  # Slowapi rate limit tests
 │   └── ...                    # (see tests/ for full list)
 ├── alembic/                   # Database migrations
 ├── infra/                     # Azure Bicep templates
 │   ├── main.bicep             # Subscription-level deployment
 │   └── resources.bicep        # All Azure resources
+├── scripts/                   # Maintenance and setup scripts
+│   ├── cleanup_e2e_users.py   # Clean up test users from E2E runs
+│   └── setup-cd-oidc.sh       # One-time Azure OIDC setup for CD
 ├── AGENTS.md                  # Mandatory pre-handoff checklist
 ├── CONTRIBUTING.md            # This file
-├── QUICKSTART.md              # 5-minute setup guide
-├── SPEC.md                    # Functional spec (outdated — needs rewrite)
 ├── pyproject.toml             # Dependencies, ruff config, scripts
 ├── pytest.ini                 # Test configuration
 ├── docker-compose.yml         # Local dev: app (8080) + PostgreSQL (5433)
 ├── Dockerfile                 # Multi-stage build (uv, Python 3.12-slim)
 ├── azure.yaml                 # Azure Developer CLI config
 ├── start.sh                   # Container entrypoint (migrations + uvicorn)
-├── fix_migration.py           # Handles dirty DB state on container startup
-└── main.py                    # Entry point: `uvicorn main:app`
+└── fix_migration.py           # Repairs inconsistent Alembic state on startup
 ```
 
 ---
@@ -197,6 +214,8 @@ status (PENDING, etc.).
 ## API Endpoints
 
 All endpoints are in `src/itemwise/api.py`. Auth endpoints use JWT bearer tokens.
+The API is served at both `/api/` and `/api/v1/` (versioned). Auto-generated docs
+are available at `/docs` (Swagger UI) and `/redoc` (ReDoc).
 
 ### Authentication
 | Method | Path | Notes |
@@ -205,17 +224,25 @@ All endpoints are in `src/itemwise/api.py`. Auth endpoints use JWT bearer tokens
 | POST | `/api/auth/login` | **Form-encoded** (OAuth2PasswordRequestForm), NOT JSON |
 | POST | `/api/auth/refresh` | Refresh JWT token |
 | GET | `/api/auth/me` | Current user profile |
+| POST | `/api/auth/logout` | Logout (invalidate token) |
 | PUT | `/api/auth/password` | Change password |
+| POST | `/api/auth/forgot-password` | Request password reset email |
+| POST | `/api/auth/reset-password` | Reset password with emailed token |
+| DELETE | `/api/auth/account` | Delete user account |
 
 ### Items
 | Method | Path | Notes |
 |--------|------|-------|
-| GET | `/api/items` | List items (filterable by category, limit) |
+| GET | `/api/items` | List items (filterable by category, location, limit) |
 | POST | `/api/items` | Create item |
-| GET | `/api/items/{id}` | Get single item |
+| GET | `/api/items/{id}` | Get single item with lots |
 | PUT | `/api/items/{id}` | Update item |
-| DELETE | `/api/items/{id}` | Delete item |
-| GET | `/api/search` | Semantic + text search |
+| DELETE | `/api/items/{id}` | Soft-delete item (moves to trash) |
+| GET | `/api/items/trash` | List soft-deleted items |
+| POST | `/api/items/{id}/restore` | Restore item from trash |
+| DELETE | `/api/items/{id}/purge` | Permanently delete item |
+| GET | `/api/items/expiring` | Items with expiration dates approaching |
+| GET | `/api/search` | Semantic + text hybrid search |
 
 ### Inventories & Sharing
 | Method | Path | Notes |
@@ -225,26 +252,38 @@ All endpoints are in `src/itemwise/api.py`. Auth endpoints use JWT bearer tokens
 | POST | `/api/inventories/{id}/members` | Add member (sends invite email if user not found) |
 | DELETE | `/api/inventories/{id}/members/{uid}` | Remove member |
 
-### Chat & Other
+### Chat
 | Method | Path | Notes |
 |--------|------|-------|
 | POST | `/api/chat` | Natural language chat (AI tool calling) |
+| POST | `/api/chat/confirm` | Confirm a pending destructive action |
+| POST | `/api/chat/image` | Analyze an uploaded image of items |
+| POST | `/api/chat/image/add` | Add items identified in an image |
+
+### Locations, Notifications & Other
+| Method | Path | Notes |
+|--------|------|-------|
 | GET | `/api/locations` | List locations |
 | POST | `/api/locations` | Create location |
+| POST | `/api/notifications/expiration-digest` | Trigger expiration email digest |
 | GET | `/health` | Health check (unauthenticated) |
-| GET | `/` | Serves `frontend/index.html` |
+| GET | `/` | Serves frontend |
 
 ---
 
 ## Frontend
 
-The entire frontend lives in `frontend/index.html` — a single ~34KB file with inline
-JavaScript and Tailwind CSS (loaded from CDN). There is no build system, no bundler, no
-component framework.
+The frontend is a modular web application served from `frontend/` at the root URL (`/`).
+It uses vanilla JavaScript split across 7 modules under `frontend/js/`, with Tailwind CSS
+loaded from CDN. There is no build system, no bundler, no component framework — changes
+take effect immediately on reload.
+
+The app is also a **Progressive Web App (PWA)** — `manifest.json` and `sw.js` enable
+"Add to Home Screen" on mobile devices with offline caching support.
 
 ### Tabs
 - **Chat** — Natural language interface with streaming responses and quick action buttons
-- **Items** — Browse and search inventory items
+- **Items** — Browse and search inventory items, with soft-delete/restore support
 - **Settings** — Inventory management, member invitations, account settings
 
 ### Key UI patterns
@@ -252,12 +291,13 @@ component framework.
 - JWT stored in `localStorage`; auto-refresh on 401
 - Inventory selector dropdown in header (hidden when user has ≤1 inventory or is on settings tab)
 - Chat messages rendered with markdown support
+- Image upload for item identification via chat
 - Error/success toasts for user feedback
 
 ### Working with the frontend
-Since there's no build step, changes take effect immediately on reload. The file is served
-by FastAPI via `FileResponse`. All API calls use `fetch()` with the JWT bearer token from
-`localStorage`.
+Since there's no build step, changes take effect immediately on reload. The HTML shell is
+served by FastAPI via `FileResponse`. JS modules are loaded via `<script>` tags. All API
+calls use `fetch()` with the JWT bearer token from `localStorage`.
 
 ---
 
@@ -295,7 +335,7 @@ search and location matching. When Azure OpenAI is unavailable, falls back to ze
 ## Development Setup
 
 ### Prerequisites
-- Python 3.12+ via [uv](https://docs.astral.sh/uv/)
+- Python 3.11+ via [uv](https://docs.astral.sh/uv/) (Docker image uses 3.12)
 - Docker Desktop (for PostgreSQL)
 - Azure CLI (for Azure OpenAI features)
 
@@ -310,7 +350,8 @@ docker compose up -d             # Start PostgreSQL (port 5433) + app (port 8080
 ```bash
 docker compose up -d itemwise-db    # Just the database
 uv run alembic upgrade head         # Apply migrations
-uv run uvicorn main:app --reload    # Start dev server on port 8000
+uv run itemwise-web                 # Start dev server on port 8080
+# Or: uv run uvicorn itemwise.api:app --reload --port 8080
 ```
 
 ### Environment variables
@@ -417,7 +458,7 @@ az postgres flexible-server start --resource-group rg-itemwise-prod \
 ### Git
 - **Default branch:** `master` (not main)
 - **Commit prefixes:** `feat`, `fix`, `docs`, `refactor`, `chore`, `test`, `ci`, `perf`
-- Always push directly to master (no PRs needed for this repo)
+- Use feature branches and pull requests — never push directly to master
 - Scan staged diffs for secrets before every commit
 
 ### Code style
@@ -459,32 +500,22 @@ emails.
 
 ---
 
-## Current Roadmap
+## Completed Roadmap
 
-Priorities established via multi-model consensus review:
+All items from the original prioritized roadmap have been implemented:
 
-### P0 — Security (do these first)
-- **Rate limiting** — Add slowapi to protect `/api/chat` (Azure OpenAI cost risk) and
-  `/api/auth/*` endpoints from abuse
-- **Password reset** — Implement forgot-password flow with email token via Azure
-  Communication Services
-
-### P1 — Core feature gaps
-- **Expiration date tracking** — Add `expiration_date` to ItemLot model, extend AI tools
-  to accept and query expiration dates
-- **Email delivery feedback** — Surface email send failures to the frontend instead of
-  silent fire-and-forget
-
-### P2 — User experience
-- **PWA / offline support** — Add service worker and web app manifest for mobile "Add to
-  Home Screen" experience
-- **Expiration notifications** — Weekly email digest of items expiring soon
-
-### P3 — Technical debt
-- **Update SPEC.md** — Current spec is severely outdated and doesn't reflect sharing,
-  lots, email, auth, or the web frontend
+- ✅ **Rate limiting** — slowapi on `/api/chat` and `/api/auth/*` endpoints
+- ✅ **Password reset** — Forgot/reset flow with email token via Azure Communication Services
+- ✅ **Expiration date tracking** — `expiration_date` on ItemLot, AI tools support it, `/api/items/expiring`
+- ✅ **PWA / offline support** — Service worker, web app manifest, installable on mobile
+- ✅ **Expiration notifications** — Email digest via `/api/notifications/expiration-digest`
+- ✅ **Image analysis** — GPT-4o vision for item identification from photos
+- ✅ **Soft delete / restore / purge** — Trash flow with restore and permanent delete
+- ✅ **Confirmation flow** — AI asks before destructive actions
+- ✅ **Account deletion** — Full account removal endpoint
+- ✅ **CSRF protection** — On sensitive endpoints
 
 ---
 
-*Last updated after the Round Table consensus review. See AGENTS.md for the mandatory
-pre-handoff checklist that must be completed before any work is handed off.*
+*See AGENTS.md for the mandatory pre-handoff checklist that must be completed before any
+work is handed off.*
