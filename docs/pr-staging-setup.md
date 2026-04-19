@@ -47,12 +47,12 @@ Example CLI:
 az role assignment create \
   --assignee <APP_CLIENT_ID> \
   --role Contributor \
-  --scope /subscriptions/9450bd3b-96c5-48b2-bfdf-3374304efbd7/resourceGroups/rg-itemwise-prod
+  --scope /subscriptions/f7858112-5c13-46e5-8341-3851a12164fa/resourceGroups/rg-itemwise-prod
 
 az role assignment create \
   --assignee <APP_CLIENT_ID> \
   --role AcrPush \
-  --scope /subscriptions/9450bd3b-96c5-48b2-bfdf-3374304efbd7/resourceGroups/rg-itemwise-prod/providers/Microsoft.ContainerRegistry/registries/<ACR_NAME>
+  --scope /subscriptions/f7858112-5c13-46e5-8341-3851a12164fa/resourceGroups/rg-itemwise-prod/providers/Microsoft.ContainerRegistry/registries/<ACR_NAME>
 ```
 
 ## One-time GitHub setup
@@ -61,7 +61,7 @@ Add these repository secrets in **Settings -> Secrets and variables -> Actions**
 
 - `AZURE_CLIENT_ID` = app registration client ID
 - `AZURE_TENANT_ID` = tenant ID
-- `AZURE_SUBSCRIPTION_ID` = `9450bd3b-96c5-48b2-bfdf-3374304efbd7`
+- `AZURE_SUBSCRIPTION_ID` = `f7858112-5c13-46e5-8341-3851a12164fa`
 - `POSTGRES_ADMIN_PASSWORD` = PostgreSQL admin password for `inventoryadmin`
 
 ## How the workflow behaves
