@@ -47,8 +47,9 @@ class TestParseFlexibleDate:
         assert result.month == 4
         assert result.day == 15
         
-        # If April 15 has passed this year, it should be next year
-        expected_year = today.year if result >= today else today.year + 1
+        # If April 15 has passed this year, the function returns next year
+        april_15_this_year = date(today.year, 4, 15)
+        expected_year = today.year if april_15_this_year >= today else today.year + 1
         assert result.year == expected_year
 
     def test_invalid_input(self):
