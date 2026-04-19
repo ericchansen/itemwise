@@ -12,7 +12,7 @@ set -euo pipefail
 
 REPO="ericchansen/itemwise"
 APP_NAME="itemwise-gha-cd-prod"
-SUBSCRIPTION_ID="9450bd3b-96c5-48b2-bfdf-3374304efbd7"
+SUBSCRIPTION_ID="f7858112-5c13-46e5-8341-3851a12164fa"
 RESOURCE_GROUP="rg-itemwise-prod"
 TENANT_ID="9c74def4-ef0a-418a-8dc7-1e7a1e85ce10"
 
