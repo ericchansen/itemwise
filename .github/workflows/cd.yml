@@ -82,7 +82,10 @@ jobs:
             > .azure/$AZD_ENV_NAME/config.json
 
       - name: Refresh environment state
-        run: azd env refresh -e "$AZD_ENV_NAME" --no-prompt
+        run: |
+          if ! azd env refresh -e "$AZD_ENV_NAME" --no-prompt; then
+            echo "::warning::azd env refresh failed; continuing because production may predate azd deployment state."
+          fi
 
       - name: Ensure PostgreSQL server is running
         shell: bash
