@@ -21,6 +21,24 @@ param azureOpenAiVisionDeployment string = 'gpt-4o'
 @secure()
 param postgresPassword string
 
+@description('Creates PostgreSQL private endpoint resources and related private DNS plumbing.')
+param enablePostgresPrivateEndpoint bool = false
+
+@description('Disables PostgreSQL public network access and removes firewall dependency path.')
+param enforcePostgresPrivateAccess bool = false
+
+@description('Address prefix for the virtual network used by PostgreSQL private endpoint.')
+param postgresPrivateNetworkAddressPrefix string = '10.42.0.0/16'
+
+@description('Address prefix for the PostgreSQL private endpoint subnet.')
+param postgresPrivateEndpointSubnetPrefix string = '10.42.1.0/24'
+
+@description('Private DNS zone used for PostgreSQL private endpoint resolution.')
+param postgresPrivateDnsZoneName string = 'privatelink.postgres.database.azure.com'
+
+@description('Legacy compatibility toggle for AllowAzureServices firewall rule while public access is enabled.')
+param allowAzureServicesFirewallRule bool = true
+
 var abbrs = loadJsonContent('./abbreviations.json')
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = {
@@ -46,6 +64,12 @@ module resources './resources.bicep' = {
     azureOpenAiEmbeddingDeployment: azureOpenAiEmbeddingDeployment
     azureOpenAiVisionDeployment: azureOpenAiVisionDeployment
     postgresPassword: postgresPassword
+    enablePostgresPrivateEndpoint: enablePostgresPrivateEndpoint
+    enforcePostgresPrivateAccess: enforcePostgresPrivateAccess
+    postgresPrivateNetworkAddressPrefix: postgresPrivateNetworkAddressPrefix
+    postgresPrivateEndpointSubnetPrefix: postgresPrivateEndpointSubnetPrefix
+    postgresPrivateDnsZoneName: postgresPrivateDnsZoneName
+    allowAzureServicesFirewallRule: allowAzureServicesFirewallRule
   }
 }
 

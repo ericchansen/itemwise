@@ -62,3 +62,6 @@ coverage.xml
 
 
 *.png
+
+# Bicep build artifacts (ARM JSON output from az bicep build)
+infra/*.json
