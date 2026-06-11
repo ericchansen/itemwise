@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "AI-powered inventory management with MCP server and natural language search"
 requires-python = ">=3.11"
 dependencies = [
-    "fastmcp>=0.2.0",
+    "fastmcp>=3.2.0",
     "sqlalchemy>=2.0.0",
     "asyncpg>=0.29.0",
     "pgvector>=0.3.0",
