@@ -18,6 +18,7 @@ env:
   AZURE_RESOURCE_GROUP: rg-itemwise-prod
   AZD_ENV_NAME: itemwise-prod
   PROD_URL: https://ca-api-ki7zeahtw2lr6.proudwater-caeb734c.centralus.azurecontainerapps.io
+  AZURE_CONTAINER_REGISTRY_ENDPOINT: ${{ vars.AZURE_CONTAINER_REGISTRY_ENDPOINT || 'crki7zeahtw2lr6.azurecr.io' }}
   POSTGRES_SERVER_NAME: psql-ki7zeahtw2lr6
   REQUIRE_PRIVATE_POSTGRES: ${{ vars.REQUIRE_PRIVATE_POSTGRES || 'false' }}
   ENABLE_POSTGRES_PRIVATE_ENDPOINT: ${{ vars.ENABLE_POSTGRES_PRIVATE_ENDPOINT || 'false' }}
