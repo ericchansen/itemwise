@@ -18,12 +18,17 @@ from itemwise.server import remove_item as remove_tool
 from itemwise.server import search_inventory as search_tool
 from itemwise.server import update_item_tool as update_tool
 
+
+def _tool_fn(tool: Any) -> Any:
+    return getattr(tool, "fn", tool)
+
+
 # Get the actual functions from the tool wrappers
-add_item = add_item_tool.fn
-update_item_tool = update_tool.fn
-remove_item = remove_tool.fn
-list_inventory = list_tool.fn
-search_inventory = search_tool.fn
+add_item = _tool_fn(add_item_tool)
+update_item_tool = _tool_fn(update_tool)
+remove_item = _tool_fn(remove_tool)
+list_inventory = _tool_fn(list_tool)
+search_inventory = _tool_fn(search_tool)
 
 
 class TestAddItem:
