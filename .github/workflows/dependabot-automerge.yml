@@ -1,8 +1,11 @@
 name: Dependabot Auto-Merge
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -10,25 +13,60 @@ permissions:
 
 jobs:
   automerge:
-    if: github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch Dependabot metadata
-        id: metadata
-        uses: dependabot/fetch-metadata@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Approve and merge safe Dependabot PRs
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      - name: Auto-approve patch and minor updates
-        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
-        run: gh pr review --approve "$PR_URL"
-        env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          mapfile -t prs < <(
+            gh pr list \
+              --state open \
+              --limit 50 \
+              --search "author:app/dependabot" \
+              --json number,title,mergeStateStatus,reviewDecision,isDraft \
+              --jq '.[] | @base64'
+          )
 
-      - name: Enable auto-merge for patch and minor updates
-        if: steps.metadata.outputs.update-type != 'version-update:semver-major'
-        run: gh pr merge --auto --squash "$PR_URL"
+          if [ "${#prs[@]}" -eq 0 ]; then
+            echo "No open Dependabot PRs."
+            exit 0
+          fi
+
+          for encoded in "${prs[@]}"; do
+            pr_json="$(echo "$encoded" | base64 --decode)"
+            number="$(echo "$pr_json" | jq -r '.number')"
+            title="$(echo "$pr_json" | jq -r '.title')"
+            merge_state="$(echo "$pr_json" | jq -r '.mergeStateStatus')"
+            review_decision="$(echo "$pr_json" | jq -r '.reviewDecision')"
+            is_draft="$(echo "$pr_json" | jq -r '.isDraft')"
+
+            if [ "$is_draft" = "true" ]; then
+              echo "#$number is draft - skipping"
+              continue
+            fi
+
+            # Skip major updates (e.g. 2.x -> 3.x)
+            if [[ "$title" =~ from[[:space:]]+([0-9]+)(\.[0-9]+)*[[:space:]]+to[[:space:]]+([0-9]+)(\.[0-9]+)* ]]; then
+              from_major="${BASH_REMATCH[1]}"
+              to_major="${BASH_REMATCH[3]}"
+              if [ "$to_major" -gt "$from_major" ]; then
+                echo "#$number major update ($from_major -> $to_major) - skipping"
+                continue
+              fi
+            fi
+
+            if [ "$review_decision" != "APPROVED" ]; then
+              gh pr review "$number" --approve || true
+            fi
+
+            if [ "$merge_state" = "CLEAN" ]; then
+              gh pr merge "$number" --rebase --delete-branch
+              echo "#$number merged"
+            else
+              echo "#$number not ready (merge state: $merge_state) - will retry on next run"
+            fi
+          done
         env:
-          PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
