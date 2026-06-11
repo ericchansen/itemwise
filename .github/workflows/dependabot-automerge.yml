@@ -15,6 +15,8 @@ jobs:
   automerge:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
       - name: Approve and merge safe Dependabot PRs
         shell: bash
         run: |
@@ -22,6 +24,7 @@ jobs:
 
           mapfile -t prs < <(
             gh pr list \
+              --repo ericchansen/itemwise \
               --state open \
               --limit 50 \
               --search "author:app/dependabot" \
@@ -58,11 +61,11 @@ jobs:
             fi
 
             if [ "$review_decision" != "APPROVED" ]; then
-              gh pr review "$number" --approve || true
+              gh pr review "$number" --repo ericchansen/itemwise --approve || true
             fi
 
             if [ "$merge_state" = "CLEAN" ]; then
-              gh pr merge "$number" --rebase --delete-branch
+              gh pr merge "$number" --repo ericchansen/itemwise --rebase --delete-branch
               echo "#$number merged"
             else
               echo "#$number not ready (merge state: $merge_state) - will retry on next run"
