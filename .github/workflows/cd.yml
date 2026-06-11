@@ -18,6 +18,11 @@ env:
   AZURE_RESOURCE_GROUP: rg-itemwise-prod
   AZD_ENV_NAME: itemwise-prod
   PROD_URL: https://ca-api-ki7zeahtw2lr6.proudwater-caeb734c.centralus.azurecontainerapps.io
+  POSTGRES_SERVER_NAME: psql-ki7zeahtw2lr6
+  REQUIRE_PRIVATE_POSTGRES: ${{ vars.REQUIRE_PRIVATE_POSTGRES || 'false' }}
+  ENABLE_POSTGRES_PRIVATE_ENDPOINT: ${{ vars.ENABLE_POSTGRES_PRIVATE_ENDPOINT || 'false' }}
+  ENFORCE_POSTGRES_PRIVATE_ACCESS: ${{ vars.ENFORCE_POSTGRES_PRIVATE_ACCESS || 'false' }}
+  ALLOW_AZURE_SERVICES_FIREWALL_RULE: ${{ vars.ALLOW_AZURE_SERVICES_FIREWALL_RULE || 'true' }}
 
 jobs:
   deploy:
@@ -64,16 +69,39 @@ jobs:
           azd env select "$AZD_ENV_NAME" --no-prompt
           azd env set AZURE_LOCATION centralus
           azd env set AZURE_SUBSCRIPTION_ID "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
-          # Write infra parameters needed for bicep param resolution
+          # Write infra parameters; emit bool params as JSON booleans (not strings) to avoid Bicep type errors
           mkdir -p .azure/$AZD_ENV_NAME
-          echo '{"infra":{"parameters":{"environmentName":"itemwise-prod","location":"centralus","postgresPassword":"'"${{ secrets.POSTGRES_ADMIN_PASSWORD }}"'"}}}' > .azure/$AZD_ENV_NAME/config.json
+          jq -n \
+            --arg envName "itemwise-prod" \
+            --arg location "centralus" \
+            --arg postgresPassword "${{ secrets.POSTGRES_ADMIN_PASSWORD }}" \
+            --argjson enablePE "${ENABLE_POSTGRES_PRIVATE_ENDPOINT}" \
+            --argjson enforcePA "${ENFORCE_POSTGRES_PRIVATE_ACCESS}" \
+            --argjson allowFW "${ALLOW_AZURE_SERVICES_FIREWALL_RULE}" \
+            '{infra:{parameters:{environmentName:$envName,location:$location,postgresPassword:$postgresPassword,enablePostgresPrivateEndpoint:$enablePE,enforcePostgresPrivateAccess:$enforcePA,allowAzureServicesFirewallRule:$allowFW}}}' \
+            > .azure/$AZD_ENV_NAME/config.json
 
       - name: Refresh environment state
         run: azd env refresh -e "$AZD_ENV_NAME" --no-prompt
 
+      - name: Ensure PostgreSQL server is running
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+          PG_SERVER: ${{ env.POSTGRES_SERVER_NAME }}
+        run: ./.github/scripts/ensure-postgres-ready.sh
+
       - name: Provision infrastructure (only if infra/ changed)
         if: steps.infra-check.outputs.changed == 'true'
         run: azd provision -e "$AZD_ENV_NAME" --no-prompt
+
+      - name: Run PostgreSQL/network preflight checks
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+          PG_SERVER: ${{ env.POSTGRES_SERVER_NAME }}
+          REQUIRE_PRIVATE_POSTGRES: ${{ env.REQUIRE_PRIVATE_POSTGRES }}
+        run: ./.github/scripts/preflight-postgres-network.sh
 
       - name: Deploy application
         run: azd deploy -e "$AZD_ENV_NAME" --no-prompt

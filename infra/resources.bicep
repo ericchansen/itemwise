@@ -8,6 +8,24 @@ param azureOpenAiVisionDeployment string
 @secure()
 param postgresPassword string
 
+@description('Creates PostgreSQL private endpoint resources and related private DNS plumbing.')
+param enablePostgresPrivateEndpoint bool = false
+
+@description('Disables PostgreSQL public network access and removes firewall dependency path.')
+param enforcePostgresPrivateAccess bool = false
+
+@description('Address prefix for the virtual network used by PostgreSQL private endpoint.')
+param postgresPrivateNetworkAddressPrefix string = '10.42.0.0/16'
+
+@description('Address prefix for the PostgreSQL private endpoint subnet.')
+param postgresPrivateEndpointSubnetPrefix string = '10.42.1.0/24'
+
+@description('Private DNS zone used for PostgreSQL private endpoint resolution.')
+param postgresPrivateDnsZoneName string = 'privatelink.postgres.database.azure.com'
+
+@description('Legacy compatibility toggle for AllowAzureServices firewall rule while public access is enabled.')
+param allowAzureServicesFirewallRule bool = true
+
 // Log Analytics Workspace
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: 'log-${resourceToken}'
@@ -44,6 +62,49 @@ resource containerRegistry 'Microsoft.ContainerRegistry/registries@2023-07-01' =
   properties: {
     adminUserEnabled: false
     anonymousPullEnabled: false
+  }
+}
+
+// VNet and subnet for PostgreSQL private endpoint
+// Gated on either flag: enforcePostgresPrivateAccess alone (no VNet) would disable public access
+// without private DNS plumbing and break connectivity, so both flags share the same infra gate.
+resource postgresPrivateNetwork 'Microsoft.Network/virtualNetworks@2024-05-01' = if (enablePostgresPrivateEndpoint || enforcePostgresPrivateAccess) {
+  name: 'vnet-postgres-${resourceToken}'
+  location: location
+  tags: tags
+  properties: {
+    addressSpace: {
+      addressPrefixes: [
+        postgresPrivateNetworkAddressPrefix
+      ]
+    }
+    subnets: [
+      {
+        name: 'snet-postgres-pe'
+        properties: {
+          addressPrefix: postgresPrivateEndpointSubnetPrefix
+          privateEndpointNetworkPolicies: 'Disabled'
+        }
+      }
+    ]
+  }
+}
+
+resource postgresPrivateDnsZone 'Microsoft.Network/privateDnsZones@2020-06-01' = if (enablePostgresPrivateEndpoint || enforcePostgresPrivateAccess) {
+  name: postgresPrivateDnsZoneName
+  location: 'global'
+  tags: tags
+}
+
+resource postgresPrivateDnsZoneLink 'Microsoft.Network/privateDnsZones/virtualNetworkLinks@2020-06-01' = if (enablePostgresPrivateEndpoint || enforcePostgresPrivateAccess) {
+  name: 'link-${resourceToken}'
+  parent: postgresPrivateDnsZone
+  location: 'global'
+  properties: {
+    registrationEnabled: false
+    virtualNetwork: {
+      id: postgresPrivateNetwork.id
+    }
   }
 }
 
@@ -145,7 +206,7 @@ resource openAiRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-0
 resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-preview' = {
   name: 'psql-${resourceToken}'
   location: location
-  tags: tags
+  tags: union(tags, { CostControl: 'Ignore' })
   sku: {
     name: 'Standard_B1ms'
     tier: 'Burstable'
@@ -164,6 +225,9 @@ resource postgresServer 'Microsoft.DBforPostgreSQL/flexibleServers@2023-12-01-pr
     highAvailability: {
       mode: 'Disabled'
     }
+    network: {
+      publicNetworkAccess: enforcePostgresPrivateAccess ? 'Disabled' : 'Enabled'
+    }
   }
 }
 
@@ -178,13 +242,56 @@ resource postgresDatabase 'Microsoft.DBforPostgreSQL/flexibleServers/databases@2
 }
 
 // PostgreSQL Firewall Rule - Allow Azure Services
-resource postgresFirewallAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = {
+resource postgresFirewallAzure 'Microsoft.DBforPostgreSQL/flexibleServers/firewallRules@2023-12-01-preview' = if (!enforcePostgresPrivateAccess && allowAzureServicesFirewallRule) {
   parent: postgresServer
   name: 'AllowAzureServices'
   properties: {
     startIpAddress: '0.0.0.0'
     endIpAddress: '0.0.0.0'
   }
+}
+
+resource postgresPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = if (enablePostgresPrivateEndpoint || enforcePostgresPrivateAccess) {
+  name: 'pe-postgres-${resourceToken}'
+  location: location
+  tags: tags
+  properties: {
+    subnet: {
+      id: resourceId('Microsoft.Network/virtualNetworks/subnets', 'vnet-postgres-${resourceToken}', 'snet-postgres-pe')
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'postgres-connection'
+        properties: {
+          privateLinkServiceId: postgresServer.id
+          groupIds: [
+            'postgresqlServer'
+          ]
+        }
+      }
+    ]
+  }
+  dependsOn: [
+    postgresPrivateNetwork
+  ]
+}
+
+resource postgresPrivateEndpointDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = if (enablePostgresPrivateEndpoint || enforcePostgresPrivateAccess) {
+  name: 'postgres-dns-zone-group'
+  parent: postgresPrivateEndpoint
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'postgres-private-dns'
+        properties: {
+          privateDnsZoneId: resourceId('Microsoft.Network/privateDnsZones', postgresPrivateDnsZoneName)
+        }
+      }
+    ]
+  }
+  dependsOn: [
+    postgresPrivateDnsZone
+  ]
 }
 
 // PostgreSQL pgvector extension

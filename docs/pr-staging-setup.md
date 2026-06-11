@@ -82,3 +82,5 @@ Add these repository secrets in **Settings -> Secrets and variables -> Actions**
 
 - This workflow intentionally skips fork PRs because it requires Azure permissions.
 - If PostgreSQL is auto-stopped, the workflow starts it before DB operations.
+- The workflow now runs PostgreSQL/network preflight checks via `.github/scripts/preflight-postgres-network.sh`.
+- Staging defaults to `REQUIRE_PRIVATE_POSTGRES=false`; production CD also defaults to `false` until the private-endpoint cutover variables are explicitly set (see CONTRIBUTING.md).
