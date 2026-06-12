@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Annotated, Any, Optional
 
 from dotenv import load_dotenv
+from azure.core.exceptions import ClientAuthenticationError
+from azure.identity import CredentialUnavailableError
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, UploadFile, File, Form, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -183,6 +185,15 @@ class ChatResponse(BaseModel):
 class ConfirmActionRequest(BaseModel):
     action_id: str
     confirmed: bool
+
+
+def _is_azure_credential_error(exc: BaseException) -> bool:
+    """Return True when an exception tree represents an Azure credential failure."""
+    if isinstance(exc, (ClientAuthenticationError, CredentialUnavailableError)):
+        return True
+    if isinstance(exc, BaseExceptionGroup):
+        return any(_is_azure_credential_error(inner) for inner in exc.exceptions)
+    return False
 
 
 def _get_item_text_for_embedding(
@@ -1462,6 +1473,17 @@ async def _chat_with_ai(user_message: str, user_id: int, inventory_id: int) -> C
         else:
             user_msg = "I had trouble processing that request. Try rephrasing or use the manual interface."
         return ChatResponse(response=user_msg, action="error")
+    except Exception as e:
+        if not _is_azure_credential_error(e):
+            raise
+        logger.exception("Azure credential error during AI chat")
+        return ChatResponse(
+            response=(
+                "Azure OpenAI is not reachable — the server's managed identity is not configured "
+                "for this Azure OpenAI resource. Check the deployment identity settings."
+            ),
+            action="error",
+        )
 
 
 async def _execute_remove_item(inventory_id: int, item_id: int, quantity: int | None, lot_id: int | None) -> str:

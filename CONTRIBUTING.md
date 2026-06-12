@@ -152,7 +152,7 @@ itemwise/
 ├── CONTRIBUTING.md            # This file
 ├── pyproject.toml             # Dependencies, ruff config, scripts
 ├── pytest.ini                 # Test configuration
-├── docker-compose.yml         # Local dev: app (8080) + PostgreSQL (5432)
+├── docker-compose.yml         # Local dev: app (8080) + PostgreSQL (5433)
 ├── Dockerfile                 # Multi-stage build (uv, Python 3.12-slim)
 ├── azure.yaml                 # Azure Developer CLI config
 ├── start.sh                   # Container entrypoint (migrations + uvicorn)
@@ -490,6 +490,16 @@ IaC supports this via `infra/main.bicep` parameters:
    - `ENABLE_POSTGRES_PRIVATE_ENDPOINT=true`
    - `ENFORCE_POSTGRES_PRIVATE_ACCESS=true`
    - `ALLOW_AZURE_SERVICES_FIREWALL_RULE=false`
+
+### Azure OpenAI identity preflight
+Production CD validates that `AZURE_CLIENT_ID` on the Container App matches an attached
+user-assigned managed identity and that identity has the `Cognitive Services OpenAI User`
+role on the Azure OpenAI account. If this fails, run `azd provision` so IaC rewrites the
+app setting and role assignment before deployment.
+
+For the existing `rg-itemwise-prod` deployment, the one-time correction is to align
+`AZURE_CLIENT_ID` with `id-ki7zeahtw2lr6.properties.clientId` and ensure that identity has
+the OpenAI role assignment on `oai-ki7zeahtw2lr6`.
 
 ---
 

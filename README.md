@@ -32,7 +32,7 @@ uv sync
 ### 2. Start services
 
 ```bash
-docker compose up -d          # PostgreSQL (5432) + app (8080)
+docker compose up -d          # PostgreSQL (5433) + app (8080)
 docker compose ps             # Verify both are healthy
 ```
 
@@ -141,7 +141,7 @@ POSTGRES_USER=postgres
 POSTGRES_PASSWORD=postgres
 POSTGRES_DB=inventory
 POSTGRES_HOST=localhost
-POSTGRES_PORT=5432
+POSTGRES_PORT=5433
 
 # Application
 DEBUG=false
@@ -185,7 +185,7 @@ itemwise/
 ├── alembic/                # Database migrations
 ├── infra/                  # Azure Bicep templates
 ├── scripts/                # Maintenance scripts
-├── docker-compose.yml      # Local dev: app (8080) + PostgreSQL (5432)
+├── docker-compose.yml      # Local dev: app (8080) + PostgreSQL (5433)
 ├── Dockerfile              # Multi-stage build
 ├── azure.yaml              # Azure Developer CLI config
 └── start.sh                # Container entrypoint
