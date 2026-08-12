@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
+from azure.identity import CredentialUnavailableError
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -187,6 +188,37 @@ class TestMe:
     async def test_me_no_token(self, client: AsyncClient) -> None:
         resp = await client.get("/api/auth/me")
         assert resp.status_code == 401
+
+
+# ===== Chat =====
+
+
+class TestChat:
+    """Tests for POST /api/chat."""
+
+    @pytest.mark.asyncio
+    async def test_chat_returns_error_response_for_azure_credential_failure(
+        self, client: AsyncClient, known_user: User
+    ) -> None:
+        headers = auth_header(known_user.id, known_user.email)
+
+        with (
+            patch("itemwise.api.AZURE_OPENAI_ENABLED", True),
+            patch(
+                "itemwise.ai_client.process_chat_with_tools",
+                side_effect=CredentialUnavailableError("managed identity unavailable"),
+            ),
+        ):
+            resp = await client.post(
+                "/api/v1/chat",
+                json={"message": "Add 2 frozen pizzas to chest freezer"},
+                headers=headers,
+            )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["action"] == "error"
+        assert "Azure OpenAI is not reachable" in data["response"]
 
 
 # ===== Items: Create =====
