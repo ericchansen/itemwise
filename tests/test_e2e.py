@@ -7,10 +7,12 @@ Run with:
     uv run python -m pytest tests/test_e2e.py -v -m e2e --no-cov
 
 Set E2E_BASE_URL env var to test against a different host (e.g., Azure).
-Chat tests require Azure OpenAI — they are skipped when chat returns errors.
+Local chat tests require Azure OpenAI and are skipped when chat is unavailable.
+Remote chat tests must pass because production deploy validation depends on them.
 """
 
 import os
+from uuid import uuid4
 
 import pytest
 from playwright.sync_api import Page, expect, sync_playwright
@@ -18,9 +20,9 @@ from playwright.sync_api import Page, expect, sync_playwright
 BASE_URL = os.environ.get("E2E_BASE_URL", "http://localhost:8080")
 _REMOTE = not BASE_URL.startswith("http://localhost")
 
-# Deterministic emails so cleanup works even after interrupted runs
-TEST_EMAIL = "e2e-test@test.com"
-REG_EMAIL = "e2e-reg@test.com"
+_RUN_ID = os.environ.get("E2E_RUN_ID", uuid4().hex[:12])
+TEST_EMAIL = os.environ.get("E2E_TEST_EMAIL", f"e2e-test-{_RUN_ID}@example.com")
+REG_EMAIL = os.environ.get("E2E_REG_EMAIL", f"e2e-reg-{_RUN_ID}@example.com")
 TEST_PASSWORD = "TestPass1234!"
 
 
@@ -85,14 +87,21 @@ def _ensure_user_registered():
     """Register the test user via API (idempotent)."""
     import httpx
 
-    try:
-        httpx.post(
-            f"{BASE_URL}/api/auth/register",
-            json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
-            timeout=10,
-        )
-    except Exception:
-        pass
+    login = httpx.post(
+        f"{BASE_URL}/api/auth/login",
+        data={"username": TEST_EMAIL, "password": TEST_PASSWORD},
+        timeout=10,
+    )
+    if login.status_code == 200:
+        return
+
+    r = httpx.post(
+        f"{BASE_URL}/api/auth/register",
+        json={"email": TEST_EMAIL, "password": TEST_PASSWORD},
+        timeout=10,
+    )
+    if r.status_code not in (201, 400):
+        r.raise_for_status()
 
 
 def _login(page: Page):
@@ -127,8 +136,15 @@ def _chat_available() -> bool:
             headers={"Authorization": f"Bearer {token}"},
             timeout=30,
         )
+        if r2.status_code != 200:
+            return False
         data = r2.json()
-        return "error" not in data.get("response", "").lower() or r2.status_code == 200
+        response = data.get("response", "").lower()
+        return (
+            data.get("action") != "error"
+            and "error" not in response
+            and "azure openai is not configured" not in response
+        )
     except Exception:
         return False
 
@@ -142,6 +158,8 @@ def _skip_if_no_chat():
     if _chat_works is None:
         _chat_works = _chat_available()
     if not _chat_works:
+        if _REMOTE:
+            pytest.fail("Remote chat API is not available")
         pytest.skip("Chat API not available (no Azure OpenAI credentials)")
 
 
@@ -204,16 +222,24 @@ class TestE2EChat:
         # Wait for assistant response
         page.wait_for_function(
             """() => {
-                const msgs = document.querySelectorAll('#chat-messages > div');
-                return msgs.length >= 2 && msgs[msgs.length - 1].textContent.length > 10;
+                const assistantMsgs = [...document.querySelectorAll('#chat-messages > div:not(.text-right)')];
+                const last = assistantMsgs.at(-1);
+                const text = last?.textContent.toLowerCase() || '';
+                return text.length > 10 && (text.includes('pizza') || text.includes('added'));
             }""",
             timeout=45000,
         )
 
-        messages = page.locator("#chat-messages").inner_text().lower()
-        assert "pizza" in messages or "added" in messages, (
-            f"Expected confirmation of adding item, got: {messages[-200:]}"
+        assistant_messages = "\n".join(
+            page.locator("#chat-messages > div:not(.text-right)").all_inner_texts()
+        ).lower()
+        assert "pizza" in assistant_messages or "added" in assistant_messages, (
+            f"Expected confirmation of adding item, got: {assistant_messages[-200:]}"
         )
+
+        page.locator("#tab-inventory").click()
+        expect(page.locator("#inventory-tab")).to_be_visible(timeout=5000)
+        expect(page.locator("#items-list")).to_contain_text("pizza", timeout=15000)
 
     def test_what_do_i_have(self, page):
         """Asking 'What do I have?' returns a response (not a demand for location)."""

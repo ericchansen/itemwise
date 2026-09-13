@@ -10,6 +10,7 @@ from alembic import context
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from itemwise.config import settings
+from itemwise.alembic_utils import escape_configparser_value
 
 # Import our models and config
 from itemwise.database.models import Base
@@ -20,7 +21,7 @@ config = context.config
 
 # Set database URL from settings (use psycopg2 for migrations, not asyncpg)
 db_url = settings.database_url.replace("+asyncpg", "").replace("?ssl=require", "?sslmode=require")
-config.set_main_option("sqlalchemy.url", db_url)
+config.set_main_option("sqlalchemy.url", escape_configparser_value(db_url))
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.

@@ -38,10 +38,10 @@ jobs:
         with:
           fetch-depth: 2
 
-      - name: Check for infra changes
-        id: infra-check
+      - name: Check for provisioning changes
+        id: provision-check
         run: |
-          if git diff --name-only HEAD~1 HEAD | grep -q '^infra/'; then
+          if git diff --name-only HEAD~1 HEAD | grep -Eq '^(infra/|\.github/workflows/cd\.yml$|\.github/scripts/)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -95,8 +95,8 @@ jobs:
           PG_SERVER: ${{ env.POSTGRES_SERVER_NAME }}
         run: ./.github/scripts/ensure-postgres-ready.sh
 
-      - name: Provision infrastructure (only if infra/ changed)
-        if: steps.infra-check.outputs.changed == 'true'
+      - name: Provision infrastructure
+        if: steps.provision-check.outputs.changed == 'true'
         run: azd provision -e "$AZD_ENV_NAME" --no-prompt
 
       - name: Run PostgreSQL/network preflight checks
@@ -106,6 +106,13 @@ jobs:
           PG_SERVER: ${{ env.POSTGRES_SERVER_NAME }}
           REQUIRE_PRIVATE_POSTGRES: ${{ env.REQUIRE_PRIVATE_POSTGRES }}
         run: ./.github/scripts/preflight-postgres-network.sh
+
+      - name: Run Azure OpenAI identity preflight checks
+        shell: bash
+        env:
+          AZURE_RESOURCE_GROUP: ${{ env.AZURE_RESOURCE_GROUP }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: ./.github/scripts/preflight-azure-openai-identity.sh
 
       - name: Deploy application
         run: azd deploy -e "$AZD_ENV_NAME" --no-prompt
