@@ -8,6 +8,14 @@ from itemwise.config import Settings
 class TestSettings:
     """Tests for Settings class."""
 
+    def test_app_url_defaults_to_local_demo(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("APP_URL", raising=False)
+        assert Settings(_env_file=None).app_url == "http://localhost:8080"
+
+    def test_app_url_from_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("APP_URL", "https://itemwise.example")
+        assert Settings(_env_file=None).app_url == "https://itemwise.example"
+
     def test_default_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test default configuration values."""
         monkeypatch.delenv("DEBUG", raising=False)

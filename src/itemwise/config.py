@@ -24,6 +24,7 @@ class Settings(BaseSettings):
 
     # Application settings
     debug: bool = False
+    app_url: str = "http://localhost:8080"
 
     # Azure OpenAI embedding deployment name
     azure_openai_embedding_deployment: str = "text-embedding-3-small"
