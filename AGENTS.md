@@ -28,21 +28,12 @@ uv run python -m pytest tests/test_e2e.py -v -m e2e --no-cov
 ```
 All E2E tests must pass against localhost:8080.
 
-### 5. Deploy to Azure
-```bash
-azd deploy
-```
-Wait for deployment to complete successfully.
+### 5. Verify Locally with Browser (Playwright MCP)
+The production demo and PR staging are being retired. Do not deploy to Azure
+as part of validation or use the retired production endpoint. Production CD
+and PR staging workflows have been removed; retain local lint, tests and E2E.
 
-### 6. Run E2E Tests Against Azure
-```powershell
-$env:E2E_BASE_URL = "https://ca-api-ki7zeahtw2lr6.proudwater-caeb734c.centralus.azurecontainerapps.io"
-uv run python -m pytest tests/test_e2e.py -v -m e2e --no-cov
-```
-All E2E tests must pass against Azure.
-
-### 7. Verify with Browser (Playwright MCP)
-Open the app in the browser (both local and Azure URLs) and interact with it:
+Open the local app in the browser and interact with it:
 - Log in or register
 - Send a chat message like "Add 2 frozen pizzas to chest freezer"
 - Verify the response makes sense
@@ -75,9 +66,7 @@ Open the app in the browser (both local and Azure URLs) and interact with it:
 | **Linter** | `ruff` |
 | **Test DB** | Docker PostgreSQL on port 5433, DB name: `inventory` |
 | **App** | Docker on port 8080 |
-| **Azure URL** | `https://ca-api-ki7zeahtw2lr6.proudwater-caeb734c.centralus.azurecontainerapps.io` |
-| **Azure region** | centralus |
-| **Deploy command** | `azd deploy` |
+| **Production demo** | Being retired; no Azure deployment during validation |
 
 ## Key Technical Notes
 

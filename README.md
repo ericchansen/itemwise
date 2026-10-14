@@ -229,8 +229,33 @@ uv run python -m pytest tests/test_e2e.py -v -m e2e --no-cov
 
 ### Deploy to Azure
 
+The `itemwise-prod` demo and its PR staging workloads are being retired.
+Production CD and PR staging workflows have been removed so CI and new pull
+requests no longer deploy into `rg-itemwise-prod`. Existing Azure resources
+require a separate, authorized teardown; removing workflows is not deletion.
+See [the staging retirement notes](docs/pr-staging-setup.md).
+
+The [Bicep templates](infra/main.bicep) and [azd configuration](azure.yaml) remain
+reusable for a deliberately provisioned, separate environment. Do not select
+the retired `itemwise-prod` environment or use deployment as a validation step
+for repository changes.
+
+After deployment, configure `APP_URL` on the Container App to its public URL so
+invitation, password-reset, and digest emails use the deployed address. Its local
+default is `http://localhost:8080`; setting it in `.env` or with `azd env set`
+does not configure the deployed Container App.
+
 ```bash
+azd env new <new-environment-name>
+azd provision
 azd deploy
+
+resource_group=$(azd env get-value AZURE_RESOURCE_GROUP)
+app_name=$(az containerapp list --resource-group "$resource_group" \
+  --query "[?tags.\"azd-service-name\"=='api'].name | [0]" --output tsv)
+app_url=$(azd env get-value SERVICE_API_ENDPOINT)
+az containerapp update --name "$app_name" --resource-group "$resource_group" \
+  --set-env-vars "APP_URL=$app_url"
 ```
 
 ## Troubleshooting

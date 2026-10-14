@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 _email_client = None
 
-APP_URL = "https://ca-api-ki7zeahtw2lr6.proudwater-caeb734c.centralus.azurecontainerapps.io"
+APP_URL = settings.app_url
 
 
 def _get_email_client() -> EmailClient | None:

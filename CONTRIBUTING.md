@@ -147,7 +147,6 @@ itemwise/
 │   └── resources.bicep        # All Azure resources
 ├── scripts/                   # Maintenance and setup scripts
 │   ├── cleanup_e2e_users.py   # Clean up test users from E2E runs
-│   └── setup-cd-oidc.sh       # One-time Azure OIDC setup for CD
 ├── AGENTS.md                  # Mandatory pre-handoff checklist
 ├── CONTRIBUTING.md            # This file
 ├── pyproject.toml             # Dependencies, ruff config, scripts
@@ -385,10 +384,10 @@ uv run python -m pytest tests/ -v --tb=short
 # E2E tests (requires running app on localhost:8080)
 uv run python -m pytest tests/test_e2e.py -v -m e2e --no-cov
 
-# E2E against Azure
-$env:E2E_BASE_URL = "https://ca-api-ki7zeahtw2lr6.proudwater-caeb734c.centralus.azurecontainerapps.io"
-uv run python -m pytest tests/test_e2e.py -v -m e2e --no-cov
 ```
+
+The production demo is being retired. Do not deploy to Azure or test against
+the retired production endpoint as part of repository validation.
 
 ### Important test details
 - `conftest.py` has an **autouse** `mock_embeddings` fixture that patches all embedding
@@ -409,7 +408,14 @@ uv run python -m pytest tests/test_e2e.py -v -m e2e --no-cov
 ## Deployment
 
 ### Azure infrastructure
-Deployed to **Azure Container Apps** in **centralus** via `azd` (Azure Developer CLI).
+The production demo and PR staging workloads in `rg-itemwise-prod` are being
+retired. Production CD, PR staging and their dedicated OIDC setup script have
+been removed. CI and local tests remain supported. Existing Azure resources
+still need a separate, authorized teardown; see
+[the retirement notes](docs/pr-staging-setup.md).
+
+The [Bicep templates](infra/main.bicep) and [azd configuration](azure.yaml) remain
+reusable for a new, explicitly selected environment.
 
 | Resource | Purpose |
 |----------|---------|
@@ -422,74 +428,30 @@ Deployed to **Azure Container Apps** in **centralus** via `azd` (Azure Developer
 | Log Analytics | Logging and monitoring |
 
 ### Deploy commands
+Do not reuse the retired `itemwise-prod` environment. These commands are only
+for a separately authorized new deployment:
+
 ```bash
+azd env new <new-environment-name>
 azd deploy                       # Deploy code changes (no infra changes)
 azd provision                    # Provision/update Azure infrastructure
 azd up                           # Provision + deploy (full)
 ```
 
-### Azure details
-- **URL:** `https://ca-api-ki7zeahtw2lr6.proudwater-caeb734c.centralus.azurecontainerapps.io`
-- **Resource group:** `rg-itemwise-prod`
-- **azd environment:** `itemwise-prod`
-- **Subscription:** `ME-MngEnvMCAP529863-erichansen-1`
-
 ### SSL note
 asyncpg uses `?ssl=require` while psycopg2 (used by Alembic) uses `?sslmode=require`.
 The `alembic/env.py` file automatically translates between these formats.
 
-### PostgreSQL auto-stop
-The Azure PostgreSQL Flexible Server (Burstable B1ms) may auto-stop when idle. Before
-deploying, check its state:
-```bash
-az postgres flexible-server show --resource-group rg-itemwise-prod \
-  --name psql-ki7zeahtw2lr6 --query state -o tsv
-```
-Start it if stopped:
-```bash
-az postgres flexible-server start --resource-group rg-itemwise-prod \
-  --name psql-ki7zeahtw2lr6
-```
-
 ### PostgreSQL deployment preflight and private networking
-Production CD now runs preflight checks that block deploy when PostgreSQL prerequisites are not met.
-
-- `psql-ki7zeahtw2lr6` must be `Ready` (workflow auto-starts if stopped)
-- when `REQUIRE_PRIVATE_POSTGRES=true` (set after private-endpoint cutover), PostgreSQL must satisfy:
-  - `publicNetworkAccess=Disabled`
-  - at least one private endpoint is attached
-  - no firewall rules remain
-
-IaC supports this via `infra/main.bicep` parameters:
+The reusable IaC supports private networking through `infra/main.bicep` parameters:
 - `enablePostgresPrivateEndpoint`
 - `enforcePostgresPrivateAccess`
 - `allowAzureServicesFirewallRule`
 
-#### One-time production cutover steps
-1. Run `azd provision --preview` and review planned networking changes.
-2. **Delete existing PostgreSQL firewall rules manually** before provisioning — `azd provision`
-   runs in incremental mode and will NOT remove rules that already exist in Azure:
-   ```bash
-   az postgres flexible-server firewall-rule list \
-     --resource-group rg-itemwise-prod --name psql-ki7zeahtw2lr6 --query "[].name" -o tsv | \
-   xargs -I{} az postgres flexible-server firewall-rule delete \
-     --resource-group rg-itemwise-prod --name psql-ki7zeahtw2lr6 --rule-name {} --yes
-   ```
-3. **Ensure Container Apps Environment is VNet-injected and connected to the same VNet** (or a
-   peered VNet) as the PostgreSQL private endpoint before enabling private access. Without this,
-   the workload cannot reach the PostgreSQL private FQDN through the private DNS zone. This
-   requires updating the `Microsoft.App/managedEnvironments` resource in `infra/resources.bicep`
-   with a `vnetConfiguration` block pointing to a delegated subnet in the same VNet.
-4. Provision with:
-   - `enablePostgresPrivateEndpoint=true`
-   - `enforcePostgresPrivateAccess=true`
-   - `allowAzureServicesFirewallRule=false`
-5. Validate private endpoint + DNS resolution from Container Apps before app deploy.
-6. Keep `REQUIRE_PRIVATE_POSTGRES=true` in GitHub Actions variables to enforce fail-fast checks.
-7. Set Actions variables before cutover:
-   - `ENABLE_POSTGRES_PRIVATE_ENDPOINT=true`
-   - `ENFORCE_POSTGRES_PRIVATE_ACCESS=true`
-   - `ALLOW_AZURE_SERVICES_FIREWALL_RULE=false`
+For a new deployment, inspect the actual VNet, private endpoint, DNS and firewall
+configuration before enabling private access. Validate connectivity from the
+Container Apps environment before deploying the app. The retired production
+workflow no longer performs these checks for you.
 
 ---
 
